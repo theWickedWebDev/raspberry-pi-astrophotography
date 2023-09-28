@@ -3,23 +3,37 @@ import RPi.GPIO as GPIO
 import gpio
 import sleep
 
+RA_PINS = dict(
+    dir=gpio.RA_DIRECTION_PIN,
+    en=gpio.RA_ENABLE_PIN,
+    pul=gpio.RA_PULSE_PIN
+)
 
-def ra_step():
-    GPIO.output(gpio.RA_ENABLE_PIN, 0)
-    GPIO.output(gpio.RA_PULSE_PIN, 1)
+DEC_PINS = dict(
+    dir=gpio.DEC_DIRECTION_PIN,
+    en=gpio.DEC_ENABLE_PIN,
+    pul=gpio.DEC_PULSE_PIN
+)
+
+
+def step(pins, dir):
+    # Set direction; forward=0 backward=1
+    GPIO.output(pins['dir'], dir)
+    # Enable Motor
+    GPIO.output(pins['en'], 0)
+    # Rising Edge
+    GPIO.output(pins['pul'], 1)
+    # Propagation
     sleep.nsleep(50_000)
-    GPIO.output(gpio.RA_PULSE_PIN, 0)
-    GPIO.output(gpio.RA_ENABLE_PIN, 1)
+    # Falling Edge
+    GPIO.output(pins['pul'], 0)
+    # Disable Motor
+    GPIO.output(pins['en'], 1)
 
 
-def dec_step():
-    GPIO.output(gpio.DEC_ENABLE_PIN, 0)
-    GPIO.output(gpio.DEC_PULSE_PIN, 1)
-    sleep.nsleep(50_000)
-    GPIO.output(gpio.DEC_PULSE_PIN, 0)
-    GPIO.output(gpio.DEC_ENABLE_PIN, 1)
+def ra_step(dir):
+    step(RA_PINS, dir)
 
 
-def validateSpeed():
-    # TODO: Write this
-    return True
+def dec_step(backward):
+    step(DEC_PINS, dir)
