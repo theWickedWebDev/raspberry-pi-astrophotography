@@ -1,10 +1,4 @@
-{"declination": 0.0, "time_scale": 2, "step_multiplier": 4, "current_position": 16, "tracking": true}
-{"declination": 0.0, "time_scale": 2, "step_multiplier": 4, "current_position": 24, "tracking": true}
-{"declination": 0.0, "time_scale": 2, "step_multiplier": 4, "current_position": 30, "tracking": true}
-{"declination": 0.0, "time_scale": 3, "step_multiplier": 4, "current_position": 8, "tracking": true}
-{"declination": 0.0, "time_scale": 1, "step_multiplier": 4, "current_position": 40, "tracking": true}
-{"declination": 0.0, "time_scale": 5, "step_multiplier": 4, "current_position": 55, "tracking": true}
-{"declination": 0.0, "time_scale": -1, "step_multiplier": 4, "current_position": 134, "tracking": true}
-{"declination": 0.0, "time_scale": 1, "step_multiplier": 4, "current_position": 159, "tracking": true}
-{"declination": 0.0, "time_scale": -1, "step_multiplier": 4, "ra_current_position": 32, "dec_current_position": 0, "tracking": true}
-{"declination": 0.0, "time_scale": 2, "step_multiplier": 4, "ra_current_position": 15, "dec_current_position": 0, "tracking": true}
+{"tracking": true, "declination": 0.0, "ra_time_scale": 1, "dec_time_scale": 1, "ra_current_position": 21, "dec_current_position": 0, "ra_step_multiplier": 4, "dec_step_multiplier": 4}
+{"tracking": true, "declination": 0.0, "ra_time_scale": 1, "dec_time_scale": 1, "ra_current_position": 31, "dec_current_position": 0, "ra_step_multiplier": 2, "dec_step_multiplier": 4}
+{"tracking": true, "declination": 0.0, "ra_time_scale": 1, "dec_time_scale": 1, "ra_current_position": 34589, "dec_current_position": 0, "ra_step_multiplier": 2, "dec_step_multiplier": 4}
+{"tracking": true, "declination": 0.0, "ra_time_scale": 1, "dec_time_scale": 1, "ra_current_position": 256, "dec_current_position": 0, "ra_step_multiplier": 4, "dec_step_multiplier": 4}

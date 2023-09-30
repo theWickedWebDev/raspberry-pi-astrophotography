@@ -1,0 +1,3 @@
+400: /api/settings/ra_time_scale/0/
+PATCH 400: /api/settings/ra_time_scale/0/
+400 PATCH: /api/settings/ra_time_scale/0/

@@ -4,21 +4,28 @@
 
 ## API
 
+### Settings
+
 ### `(PATCH)` => /api/settings/`[$setting]`/`[$value]`
 
-#### Setting Keys
+`tracking`
 
-`right_ascension` - HMS Format (*ie. 02h31m49.09s*)
+    boolean
 
-    Normally used for initial alignment only.
+    True: Mount is actively tracking a target
+
+`ra_current_position` | `dec_current_position`
+
+    integer
+
+    This is manually set during initial alignment only
 
 
-`declination` - DMS Format (*ie. 36°8'40.629"N*)
+`ra_step_multiplier` | `dec_step_multiplier`
 
-    Normally used for initial alignment only.
+    1 | 2 | 4 | 8
 
-`step_multiplier` - 1 | 2 | 4 | 8
-
+    This is manually set during initial alignment only
     First Needs to be set manually with the stepper motor DIP switches.
 
     - `1` *Full Step*
@@ -26,34 +33,62 @@
     - `4` *Quarter Step*
     - `8` *Eighth Step*
 
-`time_scale`
+`declination`
 
-`pan_speed`
+    DMS format
+
+    ie. 36°8\'40.629\"N
+
+    This is manually set during initial alignment only (typically)
+
+
+`ra_time_scale` | `dec_time_scale`
+    
+    integer not equal to 0
+     
+    Forward= Positive number
+    Backward= Negative number
 
 #### Local Scripts
 
 ```
-./update.sh step_multiplier 1
-./update.sh declination 36°8\'40.629\"N 
-./update.sh time_scale 1 
-./update.sh pan_speed 2 
+./update.sh $setting $value
 ```
 
+## Functions
 
 ### GOTO
 Directs the mount at the given RA/DEC Coordinates
 
 `./goto.sh $RA $DEC`
+
+#### Examples
+
 ```
+./goto.sh $ra $dec 
+
 ./goto.sh 02h31m49.09s 36°8\'40.629\"N 
 ```
+---
 
 ### PAN
 Pans the mount by the given amount of steps
 
-`./pan.sh $RA $DEC`
+### `(PATCH)` => /api/functions/pan/$motor/$dir/$value
+
+    Motor
+    a | b
+
+    Dir
+    1 | 0
+
+    Value
+    integer (Number of steps)
+
 
 #### Examples
+
+`./pan.sh $RA $DEC`
 
 - *Moves the Right Ascension forward by 2 steps*
     ```
@@ -69,20 +104,12 @@ Pans the mount by the given amount of steps
     ```
     ./pan.sh 2 2
     ```
+---
 
-### TRACKING
-#### Start Tracking
-```
-./update.sh tracking True
-```
-#### Stop Tracking
-```
-./update.sh tracking False 
-```
-
-#### Set current position
+### Polar Align
 (Used on setup) Does not move mount, only tells the api
-the current position of `Right Ascension Motor`
-```
-./update.sh current_position 0 
-```
+that RA and DEC are set to celestial north pole
+
+### `(PATCH)` => /api/functions/polar-align
+
+---

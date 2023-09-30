@@ -37,3 +37,11 @@ def ra_step(dir):
 
 def dec_step(backward):
     step(DEC_PINS, dir)
+
+
+def ra_setMicrosteps(val):
+    print(f"Set RA microstepping to {val}")
+
+
+def dec_setMicrosteps(val):
+    print(f"Set DEC microstepping to {val}")
