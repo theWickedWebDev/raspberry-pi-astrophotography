@@ -70,10 +70,10 @@ def ra():
         if bool(settings['tracking'] == True):
             forward = settings['ra_time_scale'] > 0
             scale = abs(settings['ra_time_scale'])
-            # NANOSECONDS_PER_STEP = round(
-            #     1_682_892_392 / math.cos(settings["dec_current_position"]) / scale)
-            # STEP_DELAY = NANOSECONDS_PER_STEP // settings["ra_step_multiplier"]
-            STEP_DELAY = 1_250_000
+            NANOSECONDS_PER_STEP = round(
+                1_682_892_392 / math.cos(settings["dec_current_position"]) / scale)
+            STEP_DELAY = NANOSECONDS_PER_STEP // settings["ra_step_multiplier"]
+            # STEP_DELAY = 1_250_000
             motor.ra_step(forward)
             settings["ra_current_steps"] += 1
             deadline += STEP_DELAY
