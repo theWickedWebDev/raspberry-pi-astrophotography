@@ -35,7 +35,7 @@ def ra_step(dir):
     step(RA_PINS, dir)
 
 
-def dec_step(backward):
+def dec_step(dir):
     step(DEC_PINS, dir)
 
 

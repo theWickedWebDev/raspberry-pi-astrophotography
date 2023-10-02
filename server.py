@@ -21,6 +21,18 @@ gpio.setup()
 POLARIS_RA = 38.31919259166666
 POLARIS_DEC = 1.5579117591980816
 
+settings = dict(
+    dec_current=POLARIS_DEC,
+    dec_target=POLARIS_DEC,
+)
+
+DEC_MOTOR_STEPS = 400
+DEC_GEAR_RATIO = 4 * 4
+DEC_STEPS_PER_REVOLUTION = DEC_MOTOR_STEPS * DEC_GEAR_RATIO
+DEC_STEP_DELAY = 10_000_000
+DEC_RAD_PER_STEP = 2 * math.pi / DEC_STEPS_PER_REVOLUTION
+
+
 app = Flask(__name__)
 
 settings = dict(
@@ -35,19 +47,21 @@ settings = dict(
     # Declination speed adjustment (positive=forward / negative=backwards)
     dec_time_scale=1,
     # Microstepping value for Right Ascention motor
-    ra_step_multiplier=4,
+    ra_step_multiplier=2,
     # Microstepping value for Declination motor
-    dec_step_multiplier=4,
+    dec_step_multiplier=2,
     #
     #
-    # Current position of Right Ascention Axis (deg)
-    ra_current_position=POLARIS_RA,
-    # Current position of Declination Axis (deg)
-    dec_current_position=POLARIS_DEC,
     # Final Coordinates
     goto_en=False,
-    goto_ra=0,
-    goto_dec=0,
+    # Position of Right Ascention Axis (deg)
+    ra_current_position=POLARIS_RA,
+    ra_target_position=0,
+    # Position of Declination Axis (deg)
+    dec_current_position=POLARIS_DEC,
+    dec_target_position=0,
+    #
+    #
     # Remaining Steps for GOTO
     goto_remaining_ra_steps=0,
     goto_remaining_dec_steps=0,
@@ -80,7 +94,31 @@ def ra():
             sleep.nsleep(deadline - time.time_ns())
 
 
+def dec():
+    while True:
+        current = settings["dec_current_position"]
+        target = settings["dec_target_position"]
+        if current == target:
+            time.sleep(0.1)
+            continue
+
+        delta = target - current
+        forward = delta >= 0
+
+        if abs(delta) < DEC_RAD_PER_STEP / 2:
+            # Once we're within half a step of target, that's the best we can
+            # do.  Signal that by setting dec_target = dec_current and stopping.
+            settings["dec_target_position"] = settings["dec_current_position"]
+            continue
+
+        motor.dec_step(forward)
+        current += DEC_RAD_PER_STEP
+        settings["dec_current_position"] = current
+        sleep.nsleep(DEC_STEP_DELAY)
+
+
 threading.Thread(target=ra).start()
+threading.Thread(target=dec).start()
 
 
 @app.route('/api/settings', methods=['GET'])

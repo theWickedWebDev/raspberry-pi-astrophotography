@@ -45,15 +45,18 @@ while True:
     # print(convert.HMS2deg(ra_dt))
     # print(ra_dt.strftime('%H %M %S.%f'))
     raDecimalDeg = convert.HMS2deg(ra_dt.strftime('%H %M %S.%f'))
-    print(f"RA:  {raDecimalDeg}")
-    print(f"DEC: {math.degrees(dec)}")
+    raRadians = raDecimalDeg * math.pi / 180
+
+    print(f"Degrees => RA:  {raDecimalDeg}    DEC: {math.degrees(dec)}")
+    print(f"")
+    print(f"Radians => RA:  {ra}    DEC: {dec}")
     # RA:  08h13m42.429227
     # 08:13:42.429227
     # DEC: -5.747297080233693
 
     # headers = {'Content-type': 'application/json'}
     r = requests.patch(
-        f"http://10.0.0.200:8765/api/goto/{raDecimalDeg}/{dec}")
+        f"http://10.0.0.200:8765/api/goto/{ra}/{dec}")
     print(r)
     print(r.content)
     # print(json.dumps(r.content, indent=2))
