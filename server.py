@@ -21,6 +21,14 @@ gpio.setup()
 POLARIS_RA = 38.31919259166666
 POLARIS_DEC = 1.5579117591980816
 
+JUPITER_RA = 0.04885952
+JUPITER_DEC = 0.25669915
+
+DEFAULT_RA_CURRENT = 0.80319616
+DEFAULT_RA_TARGET = 0.80319616
+DEFAULT_DEC_CURRENT = 0.30603476
+DEFAULT_DEC_TARGET = 0.30603476
+
 settings = dict(
     dec_current=POLARIS_DEC,
     dec_target=POLARIS_DEC,
@@ -47,7 +55,7 @@ settings = dict(
     # Declination speed adjustment (positive=forward / negative=backwards)
     dec_time_scale=1,
     # Microstepping value for Right Ascention motor
-    ra_step_multiplier=2,
+    ra_step_multiplier=4,
     # Microstepping value for Declination motor
     dec_step_multiplier=2,
     #
@@ -55,11 +63,11 @@ settings = dict(
     # Final Coordinates
     goto_en=False,
     # Position of Right Ascention Axis (deg)
-    ra_current_position=POLARIS_RA,
-    ra_target_position=0,
+    ra_current_position=DEFAULT_RA_CURRENT,
+    ra_target_position=DEFAULT_RA_TARGET,
     # Position of Declination Axis (deg)
-    dec_current_position=POLARIS_DEC,
-    dec_target_position=0,
+    dec_current_position=DEFAULT_DEC_CURRENT,
+    dec_target_position=DEFAULT_DEC_TARGET,
     #
     #
     # Remaining Steps for GOTO
@@ -112,7 +120,7 @@ def dec():
             continue
 
         motor.dec_step(forward)
-        current += DEC_RAD_PER_STEP
+        current += math.copysign(DEC_RAD_PER_STEP, delta)
         settings["dec_current_position"] = current
         sleep.nsleep(DEC_STEP_DELAY)
 
@@ -192,6 +200,19 @@ def put_settings():
         else:
             statusCode = validationResponse['statusCode']
 
+    log.settings(settings)
+    response = make_response(settings)
+    response.status_code = statusCode
+    return response
+
+
+@app.route('/api/settings/slew/dec/<steps>', methods=['POST'])
+def slew_dec(steps):
+    statusCode = 200
+
+    newDecTarget = float(steps) * DEC_RAD_PER_STEP + \
+        settings['dec_current_position']
+    settings['dec_target_position'] = newDecTarget
     log.settings(settings)
     response = make_response(settings)
     response.status_code = statusCode
