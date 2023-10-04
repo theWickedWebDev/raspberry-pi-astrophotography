@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "raspberry-pi-astrophotography"
+version = "0.1.0"
+description = ""
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.9,<3.13"
+astropy = "^5.3.3"
+numpy = "^1.26.0"
+rich = "^13.6.0"
+flask = "^3.0.0"
+
+[tool.poetry.group.rpi]
+optional = true
+
+[tool.poetry.group.rpi.dependencies]
+rpi-gpio = "^0.7.1"
+
+[tool.poetry.group.dev.dependencies]
+black = "^23.9.1"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
