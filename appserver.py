@@ -1,5 +1,6 @@
 from flask import Flask, request, make_response
-from astropy.coordinates import ICRS, SkyCoord
+from astropy.coordinates import HADec, ICRS, SkyCoord
+from astropy.time import Time
 from rich import print_json
 
 #
@@ -39,6 +40,32 @@ def create_app(telescope: tc.TelescopeControl):
         response = make_response(settings)
         response.status_code = statusCode
         return response
+
+    @app.route("/api/calibrate/by_name/<_name>", methods=["POST"])
+    def calibrate_by_name(_name):
+        statusCode = 200
+
+        coord = SkyCoord.from_name(_name)
+
+        tcoord = coord.transform_to(
+            HADec(obstime=Time.now(), location=telescope.config.location)
+        )
+
+        running = telescope.is_running
+
+        if running:
+            telescope.stop()
+
+        o: tc.TelescopeOrientation = (tcoord.ha, tcoord.dec)  # pyright: ignore
+        telescope.set_orientation(o)
+
+        if running:
+            telescope.start()
+
+        response = make_response(settings)
+        response.status_code = statusCode
+        print_json(data=settings)
+        return settings
 
     @app.route("/api/goto/<_ra>/<_dec>", methods=["POST"])
     def goto(_ra, _dec):
