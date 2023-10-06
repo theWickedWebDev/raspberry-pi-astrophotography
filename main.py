@@ -33,6 +33,12 @@ STEPHEN_HOUSE = EarthLocation(
 )
 
 
+def orientation_from_skycoord(coord: SkyCoord) -> tc.TelescopeOrientation:
+    tcoord = coord.transform_to(
+        HADec(obstime=Time.now(), location=STEPHEN_HOUSE))
+    return tcoord.ha, tcoord.dec
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -54,12 +60,12 @@ def main():
             bearing_axis=tc.StepperAxis(
                 motor_steps=800,
                 gear_ratio=4 * 4 * 4 * 4,
-                max_speed=1 * u.deg / u.second,  # pyright: ignore
+                max_speed=1.5 * u.deg / u.second,  # pyright: ignore
             ),
             declination_axis=tc.StepperAxis(
-                motor_steps=800,
+                motor_steps=400,
                 gear_ratio=4 * 4,
-                max_speed=2 * u.deg / u.second,  # pyright: ignore
+                max_speed=4 * u.deg / u.second,  # pyright: ignore
             ),
             motor_controller=(
                 noop_motor_controller if args.virtual else rpi_motor_controller
@@ -70,6 +76,8 @@ def main():
             0 * u.hourangle,  # pyright: ignore
             0 * u.deg,  # pyright: ignore
         ),
+        # orientation=orientation_from_skycoord(SkyCoord.from_name("Polaris")),
+        # orientation=orientation_from_skycoord(SkyCoord.from_name("Mebsuta")),
         # target=tc.FixedTarget(
         #     SkyCoord(
         #         0 * u.hourangle,  # pyright: ignore
@@ -77,7 +85,9 @@ def main():
         #         frame=HADec(obstime=Time.now(), location=STEPHEN_HOUSE),
         #     ).transform_to(ICRS)
         # ),
-        target=tc.FixedTarget(SkyCoord.from_name("Vega")),
+        # target=tc.FixedTarget(SkyCoord.from_name("Mebsuta")),
+        # target=tc.FixedTarget(SkyCoord.from_name("Polaris")),
+        # target=tc.FixedTarget(SkyCoord.from_name("Vega")),
         # target=tc.SolarSystemTarget("jupiter"),
     )
 
@@ -131,9 +141,9 @@ def rpi_motor_controller(
             continue
 
         if action == 1:
-            motor.leading(pins, 0)  # forward
+            motor.leading(pins, 1)  # forward
         elif action == -1:
-            motor.leading(pins, 1)  # backward
+            motor.leading(pins, 0)  # backward
 
     nsleep(motor.PULSE_NS)
 

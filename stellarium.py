@@ -47,7 +47,7 @@ class StellariumTCPHandler(socketserver.BaseRequestHandler):
                 time.sleep(0.1)
 
 
-class StellariumTCPServer(socketserver.TCPServer):
+class StellariumTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
 
     telescope: tc.TelescopeControl

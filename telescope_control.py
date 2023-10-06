@@ -229,6 +229,7 @@ class TelescopeControl:
             time.sleep(0.5)
 
         _log.debug("telescope: stopping")
+        self._run_control = None
         control.done.set()
 
     def _reset_if_running(self):
