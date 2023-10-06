@@ -41,26 +41,29 @@ def create_app(telescope: tc.TelescopeControl):
         response.status_code = statusCode
         return response
 
-    @app.route("/api/calibrate/<_ra>/<_dec>", methods=["POST"])
-    def calibrate(_ra, _dec):
-        statusCode = 200
-
-        coord = SkyCoord(ra=_ra, dec=_dec, frame=ICRS)
-
+    def calib(target: tc.Target, track: bool = True):
+        coord = target.coordinate(Time.now(), telescope.config.location)
         tcoord = coord.transform_to(
             HADec(obstime=Time.now(), location=telescope.config.location)
         )
 
         running = telescope.is_running
-
         if running:
             telescope.stop()
 
         o: tc.TelescopeOrientation = (tcoord.ha, tcoord.dec)  # pyright: ignore
         telescope.set_orientation(o)
+        if track:
+            telescope.set_target(target)
 
         if running:
             telescope.start()
+
+    @app.route("/api/calibrate/<_ra>/<_dec>", methods=["POST"])
+    def calibrate(_ra, _dec):
+        statusCode = 200
+
+        calib(tc.FixedTarget(SkyCoord(ra=_ra, dec=_dec, frame=ICRS)))
 
         response = make_response(settings)
         response.status_code = statusCode
@@ -71,22 +74,18 @@ def create_app(telescope: tc.TelescopeControl):
     def calibrate_by_name(_name):
         statusCode = 200
 
-        coord = SkyCoord.from_name(_name)
+        calib(tc.FixedTarget(SkyCoord.from_name(_name)))
 
-        tcoord = coord.transform_to(
-            HADec(obstime=Time.now(), location=telescope.config.location)
-        )
+        response = make_response(settings)
+        response.status_code = statusCode
+        print_json(data=settings)
+        return settings
 
-        running = telescope.is_running
+    @app.route("/api/calibrate/solar_system_object/<_name>", methods=["POST"])
+    def calibrate_solar_system_object(_name):
+        statusCode = 200
 
-        if running:
-            telescope.stop()
-
-        o: tc.TelescopeOrientation = (tcoord.ha, tcoord.dec)  # pyright: ignore
-        telescope.set_orientation(o)
-
-        if running:
-            telescope.start()
+        calib(tc.SolarSystemTarget(_name))
 
         response = make_response(settings)
         response.status_code = statusCode
