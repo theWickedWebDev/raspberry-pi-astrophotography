@@ -41,6 +41,32 @@ def create_app(telescope: tc.TelescopeControl):
         response.status_code = statusCode
         return response
 
+    @app.route("/api/calibrate/<_ra>/<_dec>", methods=["POST"])
+    def calibrate(_ra, _dec):
+        statusCode = 200
+
+        coord = SkyCoord(ra=_ra, dec=_dec, frame=ICRS)
+
+        tcoord = coord.transform_to(
+            HADec(obstime=Time.now(), location=telescope.config.location)
+        )
+
+        running = telescope.is_running
+
+        if running:
+            telescope.stop()
+
+        o: tc.TelescopeOrientation = (tcoord.ha, tcoord.dec)  # pyright: ignore
+        telescope.set_orientation(o)
+
+        if running:
+            telescope.start()
+
+        response = make_response(settings)
+        response.status_code = statusCode
+        print_json(data=settings)
+        return settings
+
     @app.route("/api/calibrate/by_name/<_name>", methods=["POST"])
     def calibrate_by_name(_name):
         statusCode = 200
