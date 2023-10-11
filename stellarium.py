@@ -1,79 +1,118 @@
-import datetime
+from __future__ import annotations
 import math
-import socket
+from socket import socket
+import socketserver
 import struct
-import requests
-import convert
-import json
+from threading import Thread
+import time
 
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-port = 10001
-s.bind(("0.0.0.0", port))
-s.listen(5)
+from astropy.coordinates import ICRS, SkyCoord
+import astropy.units as u
 
-client, _ = s.accept()
+import telescope_control as tc
 
-while True:
+
+def decode_ra(x: int):
+    """Convert Stellarium wire RA value to fractional seconds"""
+    return (x % 0xFFFFFFFF) / 0xFFFFFFFF * 86_400
+
+
+def decode_dec(x: int):
+    """Convert Stellarium wire DEC value to radians"""
+    return x / 0x40000000 * math.pi / 2
+
+
+def encode_ra(x: float):
+    """Convert RA (fractional seconds) to Stellarium wire format"""
+    return round((float(x) % 86_400) / 86_400 * 0xFFFFFFFF)
+
+
+def encode_dec(x: float):
+    """Convert DEC (radians) to Stellarium wire format"""
+    return int(x * 2 / math.pi * 0x40000000)
+
+
+class StellariumTCPHandler(socketserver.BaseRequestHandler):
+    server: StellariumTCPServer
+
+    def handle(self):
+        client = self.request
+        Thread(
+            target=_report_position_loop,
+            args=[client, self.server.telescope],
+            daemon=True,
+        ).start()
+        while True:
+            if not _read_target(client, self.server.telescope):
+                time.sleep(0.1)
+
+
+class StellariumTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    allow_reuse_address = True
+
+    telescope: tc.TelescopeControl
+
+    def __init__(
+        self,
+        server_address: socketserver._AfInetAddress,
+        telescope: tc.TelescopeControl,
+        RequestHandlerClass=StellariumTCPHandler,
+        bind_and_activate=True,
+    ):
+        super().__init__(server_address, RequestHandlerClass, bind_and_activate)
+        self.telescope = telescope
+
+
+def _report_position_loop(client: socket, telescope: tc.TelescopeControl):
+    while True:
+        pos = telescope.current_skycoord()
+        _report_position(client, pos)
+        time.sleep(0.5)
+
+
+def _report_position(client: socket, pos: SkyCoord):
+    # FIXME: Send a real time value
+    t_raw = 0
+
+    ra: float = pos.ra.to(u.hourangle) / (24 * u.hourangle) * 86_400  # pyright: ignore
+    dec: float = pos.dec.to(u.rad).value  # pyright: ignore
+
+    client.send(
+        struct.pack(
+            "<hhQLll",
+            24,
+            0,
+            t_raw,
+            encode_ra(ra),
+            encode_dec(dec),
+            0,
+        )
+    )
+
+
+def _read_target(client: socket, telescope: tc.TelescopeControl):
     # Read msg length and type
     header = client.recv(4)
     if not header:
-        break
+        return False
 
-    msglen, msgtype, = struct.unpack('<hh', header)
+    msglen, msgtype = struct.unpack("<hh", header)
+
     # The protocol only defines one message type: 0
     assert msgtype == 0
     # Read the rest of the message (don't include the header count)
     body = client.recv(msglen - 4)
 
     # Unpack raw data
-    t_raw, ra_raw, dec_raw = struct.unpack('<QLl', body)
+    _, ra_raw, dec_raw = struct.unpack("<QLl", body)
+    # TODO: Use the time given by Stellarium for something?
 
-    # Convert ra_raw to fractional seconds
-    ra = (ra_raw % 0x100000000) / 0x100000000 * 86400
-    # Convert dec_raw to radians
-    dec = dec_raw / 0x40000000 * math.pi / 2
+    coord = SkyCoord(
+        (decode_ra(ra_raw) / 3600) * u.hourangle,  # pyright: ignore
+        decode_dec(dec_raw) * u.rad,
+        frame=ICRS,
+    )
 
-    # Formatting/display from here on
-    h = int(ra // 3600)
-    m = int((ra - h * 3600) // 60)
-    s = int(ra % 60)
-    us = int((ra % 1) * 1_000_000)
-    ra_dt = datetime.time(h, m, s, us)
+    telescope.set_target(tc.FixedTarget(coord))
 
-    # print(f"RA:  {ra_dt.strftime('%Hh%Mm%S.%f')}")
-    # print(convert.HMS2deg(ra_dt))
-    # print(ra_dt.strftime('%H %M %S.%f'))
-    raDecimalDeg = convert.HMS2deg(ra_dt.strftime('%H %M %S.%f'))
-    raRadians = raDecimalDeg * math.pi / 180
-
-    print(f"Degrees => RA:  {raDecimalDeg}    DEC: {math.degrees(dec)}")
-    print(f"")
-    print(f"Radians => RA:  {ra}    DEC: {dec}")
-    # RA:  08h13m42.429227
-    # 08:13:42.429227
-    # DEC: -5.747297080233693
-
-    # headers = {'Content-type': 'application/json'}
-    r = requests.patch(
-        f"http://10.0.0.200:8765/api/goto/{ra}/{dec}")
-    print(r)
-    print(r.content)
-    # print(json.dumps(r.content, indent=2))
-
-# Protocol definition is here.  Stellarium is the "client", telescope is the "server".
-# http://svn.code.sf.net/p/stellarium/code/trunk/telescope_server/stellarium_telescope_protocol.txt
-
-# client->server:
-# MessageGoto (type =0)
-# LENGTH (2 bytes,integer): length of the message
-# TYPE   (2 bytes,integer): 0
-# TIME   (8 bytes,integer): current time on the client computer in microseconds
-#                   since 1970.01.01 UT. Currently unused.
-# RA     (4 bytes,unsigned integer): right ascension of the telescope (J2000)
-#            a value of 0x100000000 = 0x0 means 24h=0h,
-#            a value of 0x80000000 means 12h
-# DEC    (4 bytes,signed integer): declination of the telescope (J2000)
-#            a value of -0x40000000 means -90degrees,
-#            a value of 0x0 means 0degrees,
-#            a value of 0x40000000 means 90degrees
+    return True

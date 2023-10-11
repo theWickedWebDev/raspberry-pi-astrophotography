@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "formatters": {
+    "simple": {
+      "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    }
+  },
+  "handlers": {
+    "stderr": {
+      "class": "logging.StreamHandler",
+      "level": "INFO",
+      "formatter": "simple",
+      "stream": "ext://sys.stderr"
+    }
+  },
+  "loggers": {
+    "__main__": {
+      "level": "INFO",
+      "handlers": [
+        "stderr"
+      ],
+      "propagate": false
+    },
+    "telescope_control": {
+      "level": "INFO",
+      "handlers": [
+        "stderr"
+      ],
+      "propagate": false
+    }
+  }
+}
