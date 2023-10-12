@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "build": "rimraf ./build && tsc",
-    "dev": "npx nodemon",
+    "dev": "npx nodemon -i",
     "start": "npm run build && node build/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
@@ -13,12 +13,16 @@
   "license": "ISC",
   "devDependencies": {
     "@types/node": "^20.8.4",
+    "@types/prompts": "^2.4.6",
+    "@types/yargs": "^17.0.28",
     "nodemon": "^3.0.1",
     "rimraf": "^5.0.5",
     "ts-node": "^10.9.1",
     "typescript": "^5.2.2"
   },
   "dependencies": {
-    "tsc": "^2.0.4"
+    "prompts": "^2.4.2",
+    "tsc": "^2.0.4",
+    "yargs": "^17.7.2"
   }
 }
