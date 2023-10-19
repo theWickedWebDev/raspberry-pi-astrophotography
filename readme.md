@@ -4,6 +4,9 @@
 
 ## API
 
+### Calibrate Example
+curl -XPOST 10.0.0.200:8765/api/calibrate/20h21m36.071s/0.978054rad
+curl -XPOST 10.0.0.200:8765/api/calibrate/
 ### Settings
 
 ### `(PATCH)` => /api/settings/`[$setting]`/`[$value]`
