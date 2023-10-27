@@ -1,10 +1,12 @@
-from flask import request
+from . import api
+from quart import request
 from gphoto2.gphoto import GPhoto
-from handlers.response import returnResponse
+from api.response import returnResponse
 
 Cam = GPhoto()
 
 
+@api.route("/api/camera/config/<_config>/", methods=["GET"])
 def camera_config_get(_config):
     try:
         value = Cam.getSetting(_config)
@@ -17,6 +19,7 @@ def camera_config_get(_config):
         }, 400)
 
 
+@api.route("/api/camera/config/<_config>/<_value>/", methods=["POST"])
 def camera_config_set(_config, _value):
     try:
         settings = Cam.setSetting(_config, _value)
@@ -30,6 +33,7 @@ def camera_config_set(_config, _value):
         }, 400)
 
 
+@api.route("/api/camera/config/", methods=["GET"])
 def camera_config_get_all():
     try:
         result = Cam.getSettings()
@@ -40,6 +44,7 @@ def camera_config_get_all():
         }, 400)
 
 
+@api.route("/api/camera/config/", methods=["POST"])
 def camera_config_set_all():
     try:
         content = request.json
@@ -51,6 +56,7 @@ def camera_config_set_all():
         }, 400)
 
 
+@api.route("/api/lens/<_focalLength>/", methods=["POST"])
 def camera_attach_lens(_focalLength):
     try:
         result = Cam.initLens(_focalLength)

@@ -1,13 +1,16 @@
-from flask import Flask, request
+from quart import Quart, request
 from astropy.coordinates import HADec, ICRS, SkyCoord
 from astropy.time import Time
 import telescope_control as tc
-from handlers.camera import camera_config_get, camera_config_set, camera_config_get_all, camera_config_set_all, camera_attach_lens
-from handlers.response import returnResponse
+from api.camera import camera_config_get, camera_config_set, camera_config_get_all, camera_config_set_all, camera_attach_lens
+from api.response import returnResponse
+from api import api
 
 
 def create_app(telescope: tc.TelescopeControl):
-    app = Flask(__name__)
+    app = Quart(__name__)
+
+    app.register_blueprint(api, url_prefix="/api")
 
     # TODO: Update the API to get things from telescope.config (and rebuild the
     # config, stop the telescope, restart the telescope as needed).
@@ -136,20 +139,5 @@ def create_app(telescope: tc.TelescopeControl):
                 "goto": False,
                 "object": _name,
             }, 400)
-
-    app.add_url_rule(
-        "/api/camera/config/", methods=["GET"], view_func=camera_config_get_all)
-
-    app.add_url_rule(
-        "/api/camera/config/", methods=["POST"], view_func=camera_config_set_all)
-
-    app.add_url_rule(
-        "/api/camera/config/<_config>/", methods=["GET"], view_func=camera_config_get)
-
-    app.add_url_rule(
-        "/api/camera/config/<_config>/<_value>/", methods=["POST"], view_func=camera_config_set)
-
-    app.add_url_rule(
-        "/api/lens/<_focalLength>/", methods=["POST"], view_func=camera_attach_lens)
 
     return app
