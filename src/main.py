@@ -5,14 +5,14 @@ import logging.config
 import os
 import threading
 
-from astropy.coordinates import EarthLocation, HADec, ICRS, SkyCoord
+from astropy.coordinates import EarthLocation, HADec, SkyCoord
 from astropy.time import Time
 import astropy.units as u
 
 import appserver
-from stellarium import StellariumTCPServer
+from lib.stellarium import StellariumTCPServer
+from lib.nsleep import nsleep
 import telescope_control as tc
-from nsleep import nsleep
 
 _log = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ def main():
     args = parser.parse_args()
 
     if not args.virtual:
-        import gpio
+        import lib.pi.gpio as gpio
 
         gpio.setup()
 
@@ -123,7 +123,7 @@ def rpi_motor_controller(
     axes: list[tc.StepperAxis],
     actions: list[int],
 ):
-    import motor
+    import lib.pi.motor as motor
 
     def find_pins(axis: tc.StepperAxis):
         if axis is telescope.config.bearing_axis:
