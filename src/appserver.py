@@ -22,17 +22,10 @@ def create_app(telescope: tc.TelescopeControl):
             HADec(obstime=Time.now(), location=telescope.config.location)
         )
 
-        running = telescope.is_running
-        if running:
-            telescope.stop()
-
         o: tc.TelescopeOrientation = (tcoord.ha, tcoord.dec)  # pyright: ignore
-        telescope.set_orientation(o)
+        telescope.orientation = o
         if track:
-            telescope.set_target(target)
-
-        if running:
-            telescope.start()
+            telescope.target = target
 
     @app.route("/api/calibrate/", methods=["POST"])
     def calibrate():
@@ -94,8 +87,7 @@ def create_app(telescope: tc.TelescopeControl):
             _ra = request.args.get('ra')
             _dec = request.args.get('dec')
 
-            telescope.set_target(tc.FixedTarget(
-                SkyCoord(ra=_ra, dec=_dec, frame=ICRS)))
+            telescope.target = tc.FixedTarget(SkyCoord(ra=_ra, dec=_dec, frame=ICRS))
 
             return returnResponse({
                 "goto": True,
@@ -113,8 +105,8 @@ def create_app(telescope: tc.TelescopeControl):
     @app.route("/api/goto/by_name/", methods=["POST"])
     def goto_by_name():
         try:
-            _name = request.args.get('name')
-            telescope.set_target(tc.FixedTarget(SkyCoord.from_name(_name)))
+            _name = request.args.get("name")
+            telescope.target = tc.FixedTarget(SkyCoord.from_name(_name))
 
             return returnResponse({
                 "goto": True,
@@ -129,12 +121,14 @@ def create_app(telescope: tc.TelescopeControl):
     @app.route("/api/goto/solar_system_object/", methods=["POST"])
     def goto_solar_system_object():
         try:
-            _name = request.args.get('name')
-            telescope.set_target(tc.SolarSystemTarget(_name))
-            return returnResponse({
-                "goto": True,
-                "object": _name,
-            })
+            _name = request.args.get("name")
+            telescope.target = tc.SolarSystemTarget(_name)
+            return returnResponse(
+                {
+                    "goto": True,
+                    "object": _name,
+                }
+            )
         except:
             return returnResponse({
                 "goto": False,

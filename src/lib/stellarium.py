@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 import math
 import struct
 
@@ -7,6 +8,8 @@ import astropy.units as u
 import trio
 
 import telescope_control as tc
+
+_log = logging.getLogger(__name__)
 
 
 def decode_ra(x: int):
@@ -31,18 +34,15 @@ def encode_dec(x: float):
 
 async def serve(host: str, port: int, telescope: tc.TelescopeControl):
     async def handler(stream: trio.SocketStream):
-        # TODO: Real logging.
-        print("stellarium connected")
+        _log.info("connected")
         try:
             async with trio.open_nursery() as n:
                 n.start_soon(_report_position_loop, stream, telescope)
                 n.start_soon(_receive_target_loop, stream, telescope)
-        except EndOfStream:
-            # TODO: Real logging.
-            print("stellarium disconnected")
+        except (trio.BrokenResourceError, EndOfStream):
+            _log.info("disconnected")
         except Exception as e:
-            # TODO: Real logging.
-            print("stellarium client error.  disconnecting")
+            _log.error("disconnecting", exc_info=e)
 
     await trio.serve_tcp(handler, port=port, host=host)
 
@@ -122,8 +122,7 @@ async def _read_target(stream: trio.SocketStream, telescope: tc.TelescopeControl
         frame=ICRS,
     )
 
-    # TODO: Real logging (or remove)
-    print("stellarium target: ", coord)
-    telescope.set_target(tc.FixedTarget(coord))
+    _log.info(f"target: {coord}")
+    telescope.target = tc.FixedTarget(coord)
 
     return True
