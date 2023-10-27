@@ -11,6 +11,8 @@ astropy = "^5.3.3"
 numpy = "^1.26.0"
 rich = "^13.6.0"
 flask = "^3.0.0"
+requests = "^2.31.0"
+pyexiftool = "^0.5.5"
 
 [tool.poetry.group.rpi]
 optional = true

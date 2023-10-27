@@ -94,7 +94,8 @@ def main():
     telescope.start()
 
     app = appserver.create_app(telescope)
-    threading.Thread(target=app.run, args=["0.0.0.0", 8765], daemon=True).start()
+    threading.Thread(target=app.run, args=[
+                     "0.0.0.0", 8765], daemon=True).start()
 
     stellarium_addr = "0.0.0.0", 10001
     with StellariumTCPServer(stellarium_addr, telescope) as server:
@@ -126,9 +127,9 @@ def rpi_motor_controller(
 
     def find_pins(axis: tc.StepperAxis):
         if axis is telescope.config.bearing_axis:
-            return motor.RA_PINS
+            return motor.RA_PINS, 1, 0
         elif axis is telescope.config.declination_axis:
-            return motor.DEC_PINS
+            return motor.DEC_PINS, 0, 1
         else:
             _log.error(f"unknown axis: {axis}")
             return None
@@ -136,18 +137,18 @@ def rpi_motor_controller(
     resolved_actions = [
         (find_pins(axis), action) for axis, action in zip(axes, actions)
     ]
-    for pins, action in resolved_actions:
+    for [pins, fwd, rev], action in resolved_actions:
         if pins is None:
             continue
 
         if action == 1:
-            motor.leading(pins, 1)  # forward
+            motor.leading(pins, fwd)  # forward
         elif action == -1:
-            motor.leading(pins, 0)  # backward
+            motor.leading(pins, rev)  # backward
 
     nsleep(motor.PULSE_NS)
 
-    for pins, _ in resolved_actions:
+    for [pins, _, _], _ in resolved_actions:
         if pins is None:
             continue
 

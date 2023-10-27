@@ -1,16 +1,10 @@
-from flask import Flask, request, make_response
+from flask import Flask, request, make_response, jsonify
 from astropy.coordinates import HADec, ICRS, SkyCoord
 from astropy.time import Time
-from rich import print_json
-
-#
-import log
-import validate
-import steps
 import telescope_control as tc
-
-
-settings = dict()
+from handlers.camera import camera_config_get, camera_config_set, camera_config_get_all, camera_config_set_all, camera_attach_lens
+from handlers.main import returnResponse
+from gphoto2.gphoto import GPhoto
 
 
 def create_app(telescope: tc.TelescopeControl):
@@ -18,28 +12,6 @@ def create_app(telescope: tc.TelescopeControl):
 
     # TODO: Update the API to get things from telescope.config (and rebuild the
     # config, stop the telescope, restart the telescope as needed).
-
-    @app.route("/api/settings", methods=["GET"])
-    def get_settings():
-        return settings
-
-    @app.route("/api/settings/<setting>/<new_value>", methods=["PATCH"])
-    def update_setting(setting, new_value):
-        statusCode = 200
-
-        validationResponse = validate.setting[setting](new_value, settings[setting])
-        if validationResponse["statusCode"] == 200:
-            settings[setting] = validationResponse["value"]
-            log.settings(settings)
-        else:
-            statusCode = validationResponse["statusCode"]
-            log.error(
-                "/api/settings/" + setting + "/" + new_value + "/", statusCode, "PATCH"
-            )
-
-        response = make_response(settings)
-        response.status_code = statusCode
-        return response
 
     def calib(target: tc.Target, track: bool = True):
         coord = target.coordinate(Time.now(), telescope.config.location)
@@ -59,100 +31,126 @@ def create_app(telescope: tc.TelescopeControl):
         if running:
             telescope.start()
 
-    @app.route("/api/calibrate/<_ra>/<_dec>", methods=["POST"])
-    def calibrate(_ra, _dec):
-        statusCode = 200
+    @app.route("/api/calibrate/", methods=["POST"])
+    def calibrate():
+        try:
+            _ra = request.args.get('ra')
+            _dec = request.args.get('dec')
+            calib(tc.FixedTarget(SkyCoord(ra=_ra, dec=_dec, frame=ICRS)))
 
-        calib(tc.FixedTarget(SkyCoord(ra=_ra, dec=_dec, frame=ICRS)))
+            return returnResponse({
+                "calibrated": True,
+                "ra": _ra,
+                "dec": _dec
+            })
 
-        response = make_response(settings)
-        response.status_code = statusCode
-        print_json(data=settings)
-        return settings
+        except:
+            return returnResponse({
+                "calibrated": False,
+                "ra": _ra,
+                "dec": _dec
+            }, 400)
 
-    @app.route("/api/calibrate/by_name/<_name>", methods=["POST"])
-    def calibrate_by_name(_name):
-        statusCode = 200
+    @app.route("/api/calibrate/by_name/", methods=["POST"])
+    def calibrate_by_name():
+        try:
+            _name = request.args.get('name')
 
-        calib(tc.FixedTarget(SkyCoord.from_name(_name)))
+            calib(tc.FixedTarget(SkyCoord.from_name(_name)))
 
-        response = make_response(settings)
-        response.status_code = statusCode
-        print_json(data=settings)
-        return settings
+            return returnResponse({
+                "calibrated": True,
+                "name": _name
+            })
+        except:
+            return returnResponse({
+                "calibrated": False,
+                "name": _name
+            }, 400)
 
-    @app.route("/api/calibrate/solar_system_object/<_name>", methods=["POST"])
-    def calibrate_solar_system_object(_name):
-        statusCode = 200
+    @app.route("/api/calibrate/solar_system_object/", methods=["POST"])
+    def calibrate_solar_system_object():
+        try:
+            _name = request.args.get('name')
 
-        calib(tc.SolarSystemTarget(_name))
+            calib(tc.SolarSystemTarget(_name))
 
-        response = make_response(settings)
-        response.status_code = statusCode
-        print_json(data=settings)
-        return settings
+            return returnResponse({
+                "calibrated": True,
+                "object": _name,
+            })
+        except:
+            return returnResponse({
+                "calibrated": False,
+                "object": _name,
+            }, 400)
 
-    @app.route("/api/goto/<_ra>/<_dec>", methods=["POST"])
-    def goto(_ra, _dec):
-        statusCode = 200
+    @app.route("/api/goto/", methods=["POST"])
+    def goto():
+        try:
+            _ra = request.args.get('ra')
+            _dec = request.args.get('dec')
 
-        telescope.set_target(tc.FixedTarget(SkyCoord(ra=_ra, dec=_dec, frame=ICRS)))
+            telescope.set_target(tc.FixedTarget(
+                SkyCoord(ra=_ra, dec=_dec, frame=ICRS)))
 
-        response = make_response(settings)
-        response.status_code = statusCode
-        print_json(data=settings)
-        return settings
+            return returnResponse({
+                "goto": True,
+                "ra": _ra,
+                "dec": _dec
+            })
 
-    @app.route("/api/goto/by_name/<_name>", methods=["POST"])
-    def goto_by_name(_name):
-        statusCode = 200
+        except:
+            return returnResponse({
+                "goto": False,
+                "ra": _ra,
+                "dec": _dec
+            }, 400)
 
-        telescope.set_target(tc.FixedTarget(SkyCoord.from_name(_name)))
+    @app.route("/api/goto/by_name/", methods=["POST"])
+    def goto_by_name():
+        try:
+            _name = request.args.get('name')
+            telescope.set_target(tc.FixedTarget(SkyCoord.from_name(_name)))
 
-        response = make_response(settings)
-        response.status_code = statusCode
-        print_json(data=settings)
-        return settings
+            return returnResponse({
+                "goto": True,
+                "name": _name
+            })
+        except:
+            return returnResponse({
+                "goto": False,
+                "name": _name
+            }, 400)
 
-    @app.route("/api/goto/solar_system_object/<_name>", methods=["POST"])
-    def goto_solar_system_object(_name):
-        statusCode = 200
+    @app.route("/api/goto/solar_system_object/", methods=["POST"])
+    def goto_solar_system_object():
+        try:
+            _name = request.args.get('name')
+            telescope.set_target(tc.SolarSystemTarget(_name))
+            return returnResponse({
+                "goto": True,
+                "object": _name,
+            })
+        except:
+            return returnResponse({
+                "goto": False,
+                "object": _name,
+            }, 400)
 
-        telescope.set_target(tc.SolarSystemTarget(_name))
+    app.add_url_rule(
+        "/api/camera/config/", methods=["GET"], view_func=camera_config_get_all)
 
-        response = make_response(settings)
-        response.status_code = statusCode
-        print_json(data=settings)
-        return settings
+    app.add_url_rule(
+        "/api/camera/config/", methods=["POST"], view_func=camera_config_set_all)
 
-    @app.route("/api/settings", methods=["PATCH"])
-    def put_settings():
-        new_settings = request.get_json()
-        statusCode = 200
+    app.add_url_rule(
+        "/api/camera/config/<_config>/", methods=["GET"], view_func=camera_config_get)
 
-        for key in new_settings:
-            validationResponse = validate.setting[key](new_settings[key], settings[key])
-            if validationResponse["statusCode"] == 200:
-                settings[key] = validationResponse["value"]
-            else:
-                statusCode = validationResponse["statusCode"]
+    app.add_url_rule(
+        "/api/camera/config/<_config>/<_value>/", methods=["POST"], view_func=camera_config_set)
 
-        log.settings(settings)
-        response = make_response(settings)
-        response.status_code = statusCode
-        return response
-
-    @app.route("/api/settings/slew/dec/<steps>", methods=["POST"])
-    def slew_dec(steps):
-        statusCode = 200
-
-        newDecTarget = (
-            float(steps) * DEC_RAD_PER_STEP + settings["dec_current_position"]
-        )
-        settings["dec_target_position"] = newDecTarget
-        log.settings(settings)
-        response = make_response(settings)
-        response.status_code = statusCode
-        return response
+    app.add_url_rule(
+        "/api/lens/<_focalLength>/", methods=["POST"], view_func=camera_attach_lens)
 
     return app
