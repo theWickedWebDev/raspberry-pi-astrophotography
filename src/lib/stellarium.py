@@ -1,13 +1,10 @@
 from __future__ import annotations
 import math
-from socket import socket
-import socketserver
 import struct
-from threading import Thread
-import time
 
 from astropy.coordinates import ICRS, SkyCoord
 import astropy.units as u
+import trio
 
 import telescope_control as tc
 
@@ -32,52 +29,41 @@ def encode_dec(x: float):
     return int(x * 2 / math.pi * 0x40000000)
 
 
-class StellariumTCPHandler(socketserver.BaseRequestHandler):
-    server: StellariumTCPServer
+async def serve(host: str, port: int, telescope: tc.TelescopeControl):
+    async def handler(stream: trio.SocketStream):
+        # TODO: Real logging.
+        print("stellarium connected")
+        try:
+            async with trio.open_nursery() as n:
+                n.start_soon(_report_position_loop, stream, telescope)
+                n.start_soon(_receive_target_loop, stream, telescope)
+        except EndOfStream:
+            # TODO: Real logging.
+            print("stellarium disconnected")
+        except Exception as e:
+            # TODO: Real logging.
+            print("stellarium client error.  disconnecting")
 
-    def handle(self):
-        client = self.request
-        Thread(
-            target=_report_position_loop,
-            args=[client, self.server.telescope],
-            daemon=True,
-        ).start()
-        while True:
-            if not _read_target(client, self.server.telescope):
-                time.sleep(0.1)
-
-
-class StellariumTCPServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
-    allow_reuse_address = True
-
-    telescope: tc.TelescopeControl
-
-    def __init__(
-        self,
-        server_address: socketserver._AfInetAddress,
-        telescope: tc.TelescopeControl,
-        RequestHandlerClass=StellariumTCPHandler,
-        bind_and_activate=True,
-    ):
-        super().__init__(server_address, RequestHandlerClass, bind_and_activate)
-        self.telescope = telescope
+    await trio.serve_tcp(handler, port=port, host=host)
 
 
-def _report_position_loop(client: socket, telescope: tc.TelescopeControl):
+async def _report_position_loop(
+    stream: trio.SocketStream, telescope: tc.TelescopeControl
+):
     while True:
         pos = telescope.current_skycoord()
-        _report_position(client, pos)
-        time.sleep(0.5)
+        await _report_position(stream, pos)
+        await trio.sleep(0.5)
 
 
-def _report_position(client: socket, pos: SkyCoord):
+async def _report_position(stream: trio.SocketStream, pos: SkyCoord):
     # FIXME: Send a real time value
     t_raw = 0
 
     ra: float = pos.ra.to(u.hourangle) / (24 * u.hourangle) * 86_400  # pyright: ignore
     dec: float = pos.dec.to(u.rad).value  # pyright: ignore
 
-    client.send(
+    await stream.send_all(
         struct.pack(
             "<hhQLll",
             24,
@@ -90,9 +76,32 @@ def _report_position(client: socket, pos: SkyCoord):
     )
 
 
-def _read_target(client: socket, telescope: tc.TelescopeControl):
+class EndOfStream(Exception):
+    pass
+
+
+async def receive_exactly(stream: trio.SocketStream, count: int):
+    data = b""
+    while len(data) < count:
+        with trio.move_on_after(1):
+            more = await stream.receive_some(count - len(data))
+            if not more:
+                raise EndOfStream
+            data += more
+    return data
+
+
+async def _receive_target_loop(
+    stream: trio.SocketStream, telescope: tc.TelescopeControl
+):
+    while True:
+        if not await _read_target(stream, telescope):
+            await trio.sleep(0.1)
+
+
+async def _read_target(stream: trio.SocketStream, telescope: tc.TelescopeControl):
     # Read msg length and type
-    header = client.recv(4)
+    header = await receive_exactly(stream, 4)
     if not header:
         return False
 
@@ -101,7 +110,7 @@ def _read_target(client: socket, telescope: tc.TelescopeControl):
     # The protocol only defines one message type: 0
     assert msgtype == 0
     # Read the rest of the message (don't include the header count)
-    body = client.recv(msglen - 4)
+    body = await receive_exactly(stream, msglen - 4)
 
     # Unpack raw data
     _, ra_raw, dec_raw = struct.unpack("<QLl", body)
@@ -113,6 +122,8 @@ def _read_target(client: socket, telescope: tc.TelescopeControl):
         frame=ICRS,
     )
 
+    # TODO: Real logging (or remove)
+    print("stellarium target: ", coord)
     telescope.set_target(tc.FixedTarget(coord))
 
     return True

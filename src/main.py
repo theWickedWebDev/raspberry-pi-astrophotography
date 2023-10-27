@@ -3,14 +3,14 @@ import argparse
 import logging
 import logging.config
 import os
-import threading
 
 from astropy.coordinates import EarthLocation, HADec, SkyCoord
 from astropy.time import Time
 import astropy.units as u
+import trio
 
 import appserver
-from lib.stellarium import StellariumTCPServer
+import lib.stellarium as stellarium
 from lib.nsleep import nsleep
 import telescope_control as tc
 
@@ -39,7 +39,7 @@ def orientation_from_skycoord(coord: SkyCoord) -> tc.TelescopeOrientation:
     return tcoord.ha, tcoord.dec
 
 
-def main():
+async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--virtual",
@@ -92,14 +92,16 @@ def main():
     )
 
     telescope.start()
-
     app = appserver.create_app(telescope)
-    threading.Thread(target=app.run, args=[
-                     "0.0.0.0", 8765], daemon=True).start()
 
-    stellarium_addr = "0.0.0.0", 10001
-    with StellariumTCPServer(stellarium_addr, telescope) as server:
-        server.serve_forever()
+    try:
+        async with trio.open_nursery() as n:
+            n.start_soon(stellarium.serve, "0.0.0.0", 10001, telescope)
+            n.start_soon(app.run_task, "0.0.0.0", 8765)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        telescope.stop()
 
 
 def noop_motor_controller(
@@ -156,4 +158,4 @@ def rpi_motor_controller(
 
 
 if __name__ == "__main__":
-    main()
+    trio.run(main)
