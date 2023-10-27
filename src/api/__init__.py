@@ -1,3 +1,4 @@
-from quart import Blueprint
+import api.camera
+import api.capture
 
-api = Blueprint('api', __name__)
+from ._blueprint import api as api
