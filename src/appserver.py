@@ -1,10 +1,9 @@
-from flask import Flask, request, make_response, jsonify
+from flask import Flask, request
 from astropy.coordinates import HADec, ICRS, SkyCoord
 from astropy.time import Time
 import telescope_control as tc
 from handlers.camera import camera_config_get, camera_config_set, camera_config_get_all, camera_config_set_all, camera_attach_lens
-from handlers.main import returnResponse
-from gphoto2.gphoto import GPhoto
+from handlers.response import returnResponse
 
 
 def create_app(telescope: tc.TelescopeControl):

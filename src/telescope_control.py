@@ -18,12 +18,13 @@ from threading import Event, RLock, Thread
 import time
 from typing import Any, Protocol, TypeAlias
 
-from nsleep import nsleep
+from lib.nsleep import nsleep
 
 
 _log = logging.getLogger(__name__)
 
-TelescopeOrientation: TypeAlias = tuple[u.Quantity["angle"], u.Quantity["angle"]]
+TelescopeOrientation: TypeAlias = tuple[u.Quantity["angle"],
+                                        u.Quantity["angle"]]
 
 
 class StepperController(Protocol):
@@ -286,7 +287,8 @@ class TelescopeControl:
             end_time_ns = planned_to_time + predict_time_ns
 
             start_time = Time(
-                datetime.fromtimestamp(planned_to_time / 1_000_000_000, timezone.utc)
+                datetime.fromtimestamp(
+                    planned_to_time / 1_000_000_000, timezone.utc)
             )
             present = HADec(obstime=start_time, location=self._config.location)
             future = HADec(

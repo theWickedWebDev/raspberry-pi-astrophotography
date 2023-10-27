@@ -1,7 +1,7 @@
 import RPi.GPIO as GPIO
 
-import gpio
-from nsleep import nsleep
+import lib.pi.gpio as gpio
+from lib.nsleep import nsleep
 
 RA_PINS = dict(
     dir=gpio.RA_DIRECTION_PIN,

@@ -1,6 +1,6 @@
 from flask import request
 from gphoto2.gphoto import GPhoto
-from handlers.main import returnResponse
+from handlers.response import returnResponse
 
 Cam = GPhoto()
 
