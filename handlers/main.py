@@ -1,5 +1,4 @@
 from flask import make_response, jsonify
-from rich import print_json
 
 
 def returnResponse(data, status=200):
