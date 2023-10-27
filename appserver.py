@@ -2,7 +2,7 @@ from flask import Flask, request, make_response, jsonify
 from astropy.coordinates import HADec, ICRS, SkyCoord
 from astropy.time import Time
 import telescope_control as tc
-from handlers.camera import camera_config_get, camera_config_set, camera_config_get_all, camera_config_set_all
+from handlers.camera import camera_config_get, camera_config_set, camera_config_get_all, camera_config_set_all, camera_attach_lens
 from handlers.main import returnResponse
 from gphoto2.gphoto import GPhoto
 
@@ -94,12 +94,6 @@ def create_app(telescope: tc.TelescopeControl):
             telescope.set_target(tc.FixedTarget(
                 SkyCoord(ra=_ra, dec=_dec, frame=ICRS)))
 
-            Cam.settings["target"] = {
-                "ra": _ra,
-
-                "dec": _dec
-            }
-
             return returnResponse({
                 "goto": True,
                 "ra": _ra,
@@ -119,7 +113,6 @@ def create_app(telescope: tc.TelescopeControl):
             _name = request.args.get('name')
             telescope.set_target(tc.FixedTarget(SkyCoord.from_name(_name)))
 
-            Cam.settings["target"] = _name
             return returnResponse({
                 "goto": True,
                 "name": _name
@@ -135,7 +128,6 @@ def create_app(telescope: tc.TelescopeControl):
         try:
             _name = request.args.get('name')
             telescope.set_target(tc.SolarSystemTarget(_name))
-            Cam.settings["target"] = _name
             return returnResponse({
                 "goto": True,
                 "object": _name,
@@ -157,5 +149,8 @@ def create_app(telescope: tc.TelescopeControl):
 
     app.add_url_rule(
         "/api/camera/config/<_config>/<_value>/", methods=["POST"], view_func=camera_config_set)
+
+    app.add_url_rule(
+        "/api/lens/<_focalLength>/", methods=["POST"], view_func=camera_attach_lens)
 
     return app

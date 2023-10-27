@@ -49,3 +49,13 @@ def camera_config_set_all():
         return returnResponse({
             "error": e.args[0]
         }, 400)
+
+
+def camera_attach_lens(_focalLength):
+    try:
+        result = Cam.initLens(_focalLength)
+        return returnResponse(result)
+    except Exception as e:
+        return returnResponse({
+            "error": e.args[0]
+        }, 400)

@@ -1,18 +1,24 @@
 import requests
+from datetime import date
+
 from exiftool import ExifToolHelper
 from gphoto2.util import getCurrentConfigValueFromCamera, setConfigValueOnCamera, getAllConfigFromCamera, setMultipleValuesOnCamera
+from gphoto2.canon550d import FocalLengths
 
 WEATHER_API_URL = 'http://wttr.in?format="%t+%w+%m+%M+%P+%z+%h+%C"'
 
 
 class GPhoto:
-    weather = {}
-    meta = {
-        "focalLength": "Not set"
-    }
 
     def __init__(self):
-        self.getWeather()
+        print("todo init")
+        # self.getWeather()
+        # self.initLens()
+        weather = {}
+        meta = {
+            "focalLengths": list(),
+            "focalLength": None
+        }
 
     def getWeather(self):
         r = requests.get(WEATHER_API_URL)
@@ -26,6 +32,22 @@ class GPhoto:
         self.weather["zenith"] = lines[5]
         self.weather["humidity"] = lines[6]
         self.weather["condition"] = lines[7]
+
+    def initLens(self, focalLength=None):
+        fl = self.getSetting('lensname')
+        for length in FocalLengths[fl]:
+            self.meta['focalLengths'].append(length)
+        if (len(self.meta['focalLengths']) == 1):
+            self.meta['focalLength'] = self.meta['focalLengths'][0]
+        elif focalLength != None:
+            if (focalLength in self.meta['focalLengths']):
+                self.meta['focalLength'] = focalLength
+            else:
+                raise Exception(
+                    focalLength + "mm is not available for the current lens")
+        else:
+            self.meta['focalLength'] = "Not Set"
+        return self.meta
 
     def getSetting(self, config):
         try:
@@ -51,8 +73,18 @@ class GPhoto:
         except Exception as e:
             raise e
 
-    def capture():
-        print("todo capture")
+    def capture(self):
+        print("TODO CAPTURE")
+        currentDate = date.today()
+        print(currentDate)
+        print("iso: todo")
+        print("aperture: todo")
+        print("exposure: todo")
+        print(self.weather)
+        print(self.meta['focalLength'] + 'mm')
+
+        # Confirm self.focalLength has been set
+
         # Use a new thread for this?
         # TODO: Connect Exif to self.capture()
         # with ExifToolHelper() as et:
