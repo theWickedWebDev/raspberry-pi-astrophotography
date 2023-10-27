@@ -31,8 +31,8 @@ def create_app(telescope: tc.TelescopeControl):
         if track:
             telescope.set_target(target)
 
-        if running:
-            telescope.start()
+        # if running:
+            # telescope.start()
 
     @app.route("/api/calibrate/", methods=["POST"])
     def calibrate():
