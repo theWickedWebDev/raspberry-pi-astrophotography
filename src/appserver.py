@@ -1,4 +1,5 @@
-from quart import Quart, request
+from quart import request
+from quart_trio import QuartTrio
 from astropy.coordinates import HADec, ICRS, SkyCoord
 from astropy.time import Time
 import telescope_control as tc
@@ -8,7 +9,7 @@ from api import api
 
 
 def create_app(telescope: tc.TelescopeControl):
-    app = Quart(__name__)
+    app = QuartTrio(__name__)
 
     app.register_blueprint(api, url_prefix="/api")
 
