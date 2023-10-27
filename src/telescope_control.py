@@ -18,7 +18,7 @@ from threading import Event, RLock, Thread
 import time
 from typing import Any, Protocol, TypeAlias
 
-from lib.nsleep import nsleep
+from lib.nsleep import nice_nsleep
 
 
 _log = logging.getLogger(__name__)
@@ -401,7 +401,7 @@ class TelescopeControl:
 
             sleep_ns = deadline - time.time_ns()
             if sleep_ns > 0:
-                nsleep(sleep_ns)
+                nice_nsleep(sleep_ns)
             else:
                 # TODO: Warn that we're running behind.
                 pass
