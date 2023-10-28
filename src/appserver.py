@@ -1,5 +1,4 @@
 from quart_trio import QuartTrio
-
 from api import api
 from api.telescope import KEY_TELESCOPE
 from telescope_control import TelescopeControl
