@@ -1,0 +1,21 @@
+Virtual environment already activated: /home/pi/.cache/pypoetry/virtualenvs/raspberry-pi-astrophotography-y-U8OmVx-py3.10
+[2023-10-27 20:46:16 -0400] [10129] [INFO] Running on http://0.0.0.0:8765 (CTRL + C to quit)
+todo init
+[2023-10-27 20:48:07 -0400] [10129] [INFO] 127.0.0.1:46938 POST /api/calibrate/by_name/ 1.1 200 70 112397
+[2023-10-27 20:50:06 -0400] [10129] [INFO] 127.0.0.1:54954 POST /api/goto/by_name/ 1.1 200 64 9094
+[2023-10-27 20:52:38 -0400] [10129] [INFO] 127.0.0.1:56246 POST /api/goto/by_name/ 1.1 200 63 1958827
+[2023-10-27 20:54:35 -0400] [10129] [INFO] 127.0.0.1:45030 POST /api/goto/by_name/ 1.1 200 64 10644
+[2023-10-27 20:56:32 -0400] [10129] [INFO] 127.0.0.1:55788 POST /api/goto/by_name/ 1.1 200 63 7786
+[2023-10-27 20:57:12 -0400] [10129] [INFO] 127.0.0.1:58428 POST /api/goto/solar_system_object/ 1.1 200 66 3898
+[2023-10-27 20:57:57 -0400] [10129] [INFO] 127.0.0.1:52830 POST /api/goto/solar_system_object/ 1.1 200 66 3943
+[2023-10-27 21:06:55 -0400] [10129] [INFO] 127.0.0.1:51324 POST /api/calibrate/by_name/ 1.1 400 70 10993438
+[2023-10-27 21:07:29 -0400] [10129] [INFO] 127.0.0.1:43772 POST /api/calibrate/by_name/ 1.1 400 70 5423687
+[2023-10-27 21:07:46 -0400] [10129] [INFO] 127.0.0.1:57178 POST /api/calibrate/solar_system_object/ 1.1 400 71 16416
+[2023-10-27 21:07:48 -0400] [10129] [INFO] 127.0.0.1:57194 POST /api/calibrate/solar_system_object/ 1.1 200 71 68368
+[2023-10-27 21:09:14 -0400] [10129] [INFO] 127.0.0.1:47378 POST /api/goto/solar_system_object/ 1.1 200 66 3886
+[2023-10-27 21:16:56 -0400] [10129] [INFO] 127.0.0.1:56368 POST /api/goto/by_name/ 1.1 200 64 9084
+[2023-10-27 22:02:12 -0400] [10129] [INFO] 10.0.0.200:53582 POST /api/camera/config/ 1.1 200 86 894071
+[2023-10-27 22:02:42 -0400] [10129] [INFO] 10.0.0.200:46096 POST /api/camera/capture/stack/start 1.1 308 295 4484
+{'frames': 3, 'iso': '1600', 'aperture': '8', 'exposure': '1', 'jpeg': True}
+[2023-10-27 22:02:42 -0400] [10129] [INFO] 10.0.0.200:46104 POST /api/camera/capture/stack/start/ 1.1 200 58 28699
+./run.sh: line 3: 10129 Killed                  python3 ./src/main.py

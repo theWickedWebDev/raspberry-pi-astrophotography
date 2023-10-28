@@ -1,11 +1,11 @@
 from quart import request
-from ._blueprint import api
+from .._blueprint import api
 import trio
 from gphoto2.gphoto import GPhoto
 from api.response import returnResponse
+from api.capture.util import set_config, set_bulb_capture, set_filename
 
 scope: trio.CancelScope | None = None
-
 
 async def capture(scope: trio.CancelScope, settings):
     print(settings)
@@ -15,29 +15,24 @@ async def capture(scope: trio.CancelScope, settings):
         imageformat = "6"
     if ("jpegonly" in settings) and (settings['jpegonly'] == True):
         imageformat = "0"
-
-    filepath = '/home/pi/captures/test-new/'
+   
+    exposure = str(settings['exposure']) + 's'
 
     with scope:
         for i in range(settings['frames']):
-            filename = filepath + "frame" + str(i)
-            # TODO: filepath: add iso/exposure/focal_length
+
             res = await trio.run_process([
                 'gphoto2',
-                '--set-config', 'imageformat=' + str(imageformat),
-                '--set-config-index', 'picturestyle=1',
-                '--set-config', 'shutterspeed=bulb',
-                '--set-config-value', 'aperture=' + str(settings['aperture']),
-                '--set-config', 'iso=' + str(settings['iso']),
-                '--filename', filename + '-%m-%d_%H:%M:%S.%C',
-                '--set-config', 'eosremoterelease=5',
-                '--wait-event=' + str(settings['exposure']) + 's',
-                '--set-config', 'eosremoterelease=11',
-                '--wait-event-and-download=6s'
+                *set_filename(i),
+                *set_config(
+                    aperture=settings['aperture'],
+                    iso=settings['iso'],
+                    imageformat=imageformat,
+                ),
+                *set_bulb_capture(exposure),
             ], capture_stdout=True, capture_stderr=True)
 
             lines = res.stdout.splitlines()
-
             if (res.stderr):
                 # print("ERROR!")
                 for line in res.stderr.splitlines():
