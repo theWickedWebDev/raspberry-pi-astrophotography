@@ -21,6 +21,13 @@
       ],
       "propagate": false
     },
+    "lib.stellarium": {
+      "level": "INFO",
+      "handlers": [
+        "stderr"
+      ],
+      "propagate": false
+    },
     "telescope_control": {
       "level": "INFO",
       "handlers": [

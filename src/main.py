@@ -34,8 +34,7 @@ STEPHEN_HOUSE = EarthLocation(
 
 
 def orientation_from_skycoord(coord: SkyCoord) -> tc.TelescopeOrientation:
-    tcoord = coord.transform_to(
-        HADec(obstime=Time.now(), location=STEPHEN_HOUSE))
+    tcoord = coord.transform_to(HADec(obstime=Time.now(), location=STEPHEN_HOUSE))
     return tcoord.ha, tcoord.dec
 
 
@@ -91,29 +90,27 @@ async def main():
         # target=tc.SolarSystemTarget("jupiter"),
     )
 
-    # telescope.start()
     app = appserver.create_app(telescope)
 
     try:
         async with trio.open_nursery() as n:
+            n.start_soon(telescope.run)
             n.start_soon(stellarium.serve, "0.0.0.0", 10001, telescope)
             n.start_soon(app.run_task, "0.0.0.0", 8765)
     except KeyboardInterrupt:
         pass
-    finally:
-        telescope.stop()
 
 
 def noop_motor_controller(
-    telescope: tc.TelescopeControl,
+    config: tc.Config,
     axes: list[tc.StepperAxis],
     actions: list[int],
 ):
     for axis, action in zip(axes, actions):
         name = "unknown"
-        if axis is telescope.config.bearing_axis:
+        if axis is config.bearing_axis:
             name = "bearing"
-        elif axis is telescope.config.declination_axis:
+        elif axis is config.declination_axis:
             name = "dec"
 
         if action != 0:
@@ -121,16 +118,16 @@ def noop_motor_controller(
 
 
 def rpi_motor_controller(
-    telescope: tc.TelescopeControl,
+    config: tc.Config,
     axes: list[tc.StepperAxis],
     actions: list[int],
 ):
     import lib.pi.motor as motor
 
     def find_pins(axis: tc.StepperAxis):
-        if axis is telescope.config.bearing_axis:
+        if axis is config.bearing_axis:
             return motor.RA_PINS, 1, 0
-        elif axis is telescope.config.declination_axis:
+        elif axis is config.declination_axis:
             return motor.DEC_PINS, 0, 1
         else:
             _log.error(f"unknown axis: {axis}")
