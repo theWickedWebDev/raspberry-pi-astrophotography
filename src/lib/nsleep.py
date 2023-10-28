@@ -26,12 +26,3 @@ def nsleep(ns: int):
 
     while _libc.nanosleep(req, rem) == -1:
         req, rem = rem, req
-
-
-def nice_nsleep(ns: int):
-    if ns > 500_000_000:
-        start = time.time_ns()
-        time.sleep((ns - 500_000_000) / 1_000_000_000)
-        ns = time.time_ns() - start
-    if ns > 0:
-        nsleep(ns)
