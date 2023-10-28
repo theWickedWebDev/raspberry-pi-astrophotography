@@ -167,6 +167,17 @@ class TelescopeControl:
             frame=HADec(obstime=Time.now(), location=self._config.location),
         ).transform_to(ICRS)
 
+    def calibrate(self, target: Target, track: bool = True):
+        coord = target.coordinate(Time.now(), self.config.location)
+        tcoord = coord.transform_to(
+            HADec(obstime=Time.now(), location=self.config.location)
+        )
+
+        o: TelescopeOrientation = (tcoord.ha, tcoord.dec)  # pyright: ignore
+        self.orientation = o
+        if track:
+            self.target = target
+
     async def run(self):
         parent_conn, child_conn = mp.Pipe()
         self._conn = parent_conn
