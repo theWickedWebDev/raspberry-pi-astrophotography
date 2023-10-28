@@ -10,9 +10,11 @@ python = ">=3.9,<3.13"
 astropy = "^5.3.3"
 numpy = "^1.26.0"
 rich = "^13.6.0"
-flask = "^3.0.0"
 requests = "^2.31.0"
 pyexiftool = "^0.5.5"
+quart = "^0.19.3"
+quart-trio = "^0.11.0"
+trio = "^0.22.2"
 
 [tool.poetry.group.rpi]
 optional = true
