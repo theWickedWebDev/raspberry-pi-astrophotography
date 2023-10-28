@@ -254,7 +254,7 @@ class SetConfig:
 
 @dataclass
 class PublishTarget:
-    target: Target
+    target: Target | None
 
 
 @dataclass
@@ -351,20 +351,20 @@ def _state_reader(
 
 def _state_publisher(state: State, conn: mpc.PipeConnection, cancel: Event):
     prev_orientation = None
+    prev_target = None
 
     # TODO: Configurable interval
-    while True:
-        try:
-            if cancel.wait(0.5):
-                break
-        except Exception as e:
-            print(type(e), e)
-
+    while not cancel.wait(0.5):
         with state.lock:
             orientation = state.orientation
+            target = state.target
+
         if orientation is not prev_orientation:
             prev_orientation = orientation
             conn.send(PublishOrientation(orientation))
+        if target is not prev_target:
+            prev_target = target
+            conn.send(PublishTarget(target))
 
 
 def _planner(state: State, q: Queue[Segment], cancel: Event):
