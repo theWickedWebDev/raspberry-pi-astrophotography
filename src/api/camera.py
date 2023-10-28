@@ -48,7 +48,7 @@ async def camera_config_get_all():
 @api.route("/camera/config/", methods=["POST"])
 async def camera_config_set_all():
     try:
-        content = request.json
+        content = await request.json
         result = Cam.setSettings(content)
         return await returnResponse(result, 200)
     except Exception as e:

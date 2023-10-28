@@ -91,7 +91,7 @@ async def main():
         # target=tc.SolarSystemTarget("jupiter"),
     )
 
-    telescope.start()
+    # telescope.start()
     app = appserver.create_app(telescope)
 
     try:
