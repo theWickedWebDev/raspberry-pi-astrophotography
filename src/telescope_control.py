@@ -156,8 +156,6 @@ class TelescopeControl:
         if self._conn:
             self._conn.send(SetTarget(target))
 
-    # TODO: Decide if we want to keep this.  It's convenient for callers (to
-    # report positions to Stellarium, for example), but it's not used otherwise.
     def current_skycoord(self):
         bearing, dec = self._orientation
 
@@ -179,16 +177,16 @@ class TelescopeControl:
             self.target = target
 
     async def run(self):
-        parent_conn, child_conn = mp.Pipe()
-        self._conn = parent_conn
+        conn, child_conn = mp.Pipe()
+        self._conn = conn
         stop = mp.Event()
 
         async with trio.open_nursery() as n:
             n.start_soon(
                 functools.partial(
                     trio.to_thread.run_sync,
-                    self._run_threaded,
-                    parent_conn,
+                    self._run_multiprocess,
+                    conn,
                     child_conn,
                     stop,
                 )
@@ -199,9 +197,9 @@ class TelescopeControl:
             except:
                 stop.set()
 
-    def _run_threaded(
+    def _run_multiprocess(
         self,
-        parent_conn: mpc.PipeConnection,
+        conn: mpc.PipeConnection,
         child_conn: mpc.PipeConnection,
         stop: mps.Event,
     ):
@@ -212,8 +210,8 @@ class TelescopeControl:
         proc.start()
 
         while not stop.is_set():
-            if parent_conn.poll(1):
-                msg: OutputMessage = parent_conn.recv()
+            if conn.poll(1):
+                msg: OutputMessage = conn.recv()
                 match msg:
                     case PublishOrientation(orientation):
 
@@ -231,11 +229,12 @@ class TelescopeControl:
                         print(f"unhandled message: {msg}")
 
         _log.debug("stopping")
-        parent_conn.send(Stop())
+        conn.send(Stop())
         try:
             proc.join(5)
         except:
             _log.error("timed out waiting for telescope control to stop")
+            proc.kill()
 
 
 @dataclass
@@ -283,16 +282,8 @@ class State:
 def _control_supervisor(state: State, conn: mpc.PipeConnection):
     stop = Event()
 
-    # TODO: would be cool to join this thread later
-
     _log.debug("telescope: starting")
     while not stop.is_set():
-        # with state_lock:
-        #     if not state.target:
-        #         _log.debug("telescope: no target: waiting")
-        #         time.sleep(1)
-        #         continue
-
         reset = Event()
         idle = Event()
 
@@ -325,8 +316,8 @@ def _control_supervisor(state: State, conn: mpc.PipeConnection):
                 for t in threads:
                     t.join()
                 break
-        idle.set()
 
+        idle.set()
         state_thread.join()
 
     _log.debug("telescope: stopping")
@@ -383,7 +374,6 @@ def _planner(state: State, q: Queue[Segment], cancel: Event):
     _log.debug("planner: start")
 
     axis_speeds = np.array(
-        # TODO: Convert from list comprehension to generator
         [
             axis.max_speed.to(u.rad / u.s).value
             for axis in [
@@ -509,11 +499,8 @@ def _executor(state: State, q: Queue[Segment], cancel: Event):
     _log.debug("executor: stop")
 
 
-# TODO: Give `execute` a more descriptive name.
 def _execute_segment(state: State, segment: Segment, cancel: Event):
     _log.debug("execute_segment: start")
-
-    # FIXME: Assert position == segment.start
 
     bearing_axis = state.config.bearing_axis
     dec_axis = state.config.declination_axis
