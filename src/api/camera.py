@@ -1,5 +1,5 @@
-from ._blueprint import api
 from quart import request
+from ._blueprint import api
 from gphoto2.gphoto import GPhoto
 
 from api.response import returnResponse
@@ -57,12 +57,12 @@ async def camera_config_set_all():
         }, 400)
 
 
-@api.route("/lens/<_focalLength>/", methods=["POST"])
-async def camera_attach_lens(_focalLength):
-    try:
-        result = Cam.initLens(_focalLength)
-        return await returnResponse(result, 200)
-    except Exception as e:
-        return await returnResponse({
-            "error": e.args[0]
-        }, 400)
+# @api.route("/lens/<_focalLength>/", methods=["POST"])
+# async def camera_attach_lens(_focalLength):
+#     try:
+#         result = Cam.initLens(_focalLength)
+#         return await returnResponse(result, 200)
+#     except Exception as e:
+#         return await returnResponse({
+#             "error": e.args[0]
+#         }, 400)

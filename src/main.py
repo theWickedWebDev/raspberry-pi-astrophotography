@@ -32,6 +32,14 @@ STEPHEN_HOUSE = EarthLocation(
     height=52.32 * u.m,  # pyright: ignore
 )
 
+TELESCOPE_MOUNT_GEAR_RATIO = 4 * 4 * 4 * 4
+CAMERA_MOUNT_GEAR_RATIO = 4 * 4
+
+RA_MOTOR_STEPS = 200 * 8
+DEC_MOTOR_STEPS = 200 * 8
+RA_GEAR_RATIO = 4 * 4 * 4 * 4
+DEC_GEAR_RATIO = TELESCOPE_MOUNT_GEAR_RATIO
+
 
 def orientation_from_skycoord(coord: SkyCoord) -> tc.TelescopeOrientation:
     tcoord = coord.transform_to(HADec(obstime=Time.now(), location=STEPHEN_HOUSE))
@@ -57,13 +65,13 @@ async def main():
     telescope = tc.TelescopeControl(
         config=tc.Config(
             bearing_axis=tc.StepperAxis(
-                motor_steps=800,
-                gear_ratio=4 * 4 * 4 * 4,
+                motor_steps=RA_MOTOR_STEPS,
+                gear_ratio=RA_GEAR_RATIO,
                 max_speed=1.5 * u.deg / u.second,  # pyright: ignore
             ),
             declination_axis=tc.StepperAxis(
-                motor_steps=400,
-                gear_ratio=4 * 4,
+                motor_steps=DEC_MOTOR_STEPS,
+                gear_ratio=DEC_GEAR_RATIO,
                 max_speed=4 * u.deg / u.second,  # pyright: ignore
             ),
             motor_controller=(
@@ -126,7 +134,7 @@ def rpi_motor_controller(
 
     def find_pins(axis: tc.StepperAxis):
         if axis is config.bearing_axis:
-            return motor.RA_PINS, 1, 0
+            return motor.RA_PINS, 0, 1
         elif axis is config.declination_axis:
             return motor.DEC_PINS, 0, 1
         else:

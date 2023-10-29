@@ -41,8 +41,8 @@ async def calibrate_by_name():
         get_telescope().calibrate(tc.FixedTarget(SkyCoord.from_name(_name)))
 
         return await returnResponse({"calibrated": True, "name": _name}, 200)
-    except:
-        return await returnResponse({"calibrated": False, "name": _name}, 400)
+    except Exception as e:
+        return await returnResponse({"calibrated": False, "name": _name, "error": e}, 400)
 
 
 @api.route("/calibrate/solar_system_object/", methods=["POST"])

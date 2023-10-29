@@ -15,8 +15,7 @@ def set_bulb_capture(exposure):
     ]
 
 def set_filename(frame, dir='./captures'):
-    filename = dir + "/frame_" + str(frame)
+    filename = dir + "/%m-%d_%H:%M:%S__frame_" + str(frame)
     return [
-        '--filename',
-        '%m-%d_%H:%M:%S__' + filename + '.%C'
+        '--filename', filename + '.%C'
     ]

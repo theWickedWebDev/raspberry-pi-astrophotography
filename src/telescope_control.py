@@ -94,7 +94,6 @@ class FixedTarget(Target):
     def coordinate(self, time: Time, location: EarthLocation):
         return self.coord
 
-
 @dataclass
 class SolarSystemTarget(Target):
     name: str

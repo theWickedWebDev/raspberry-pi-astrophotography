@@ -24,6 +24,10 @@ def step(pins, dir):
     nsleep(PULSE_NS)
     trailing(pins)
 
+# From Documentation
+# GPIO24 - LOW (Forward) // HIGH (Reverse)
+# GPIO4 - HIGH (Disable) // LOW (Enable)
+# GPIO18 - Pulse PWM
 
 def leading(pins: dict, dir):
     # Set direction; forward=0 backward=1
