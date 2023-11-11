@@ -9,10 +9,10 @@ from astropy.time import Time
 import astropy.units as u
 import trio
 
-import appserver
-import lib.stellarium as stellarium
-from lib.nsleep import nsleep
-import telescope_control as tc
+from .lib import stellarium
+from .lib.nsleep import nsleep
+from . import appserver
+from . import telescope_control as tc
 
 _log = logging.getLogger(__name__)
 
@@ -50,7 +50,7 @@ async def main():
     args = parser.parse_args()
 
     if not args.virtual:
-        import lib.pi.gpio as gpio
+        from .lib.pi import gpio
 
         gpio.setup()
 

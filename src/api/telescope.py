@@ -3,9 +3,9 @@ from quart import current_app, request
 from astropy.coordinates import ICRS, SkyCoord
 from astropy.time import Time
 
+from .. import telescope_control as tc
 from ._blueprint import api
 from .response import returnResponse
-import telescope_control as tc
 
 # TODO: Update the API to get things from telescope.config (and rebuild the
 # config, stop the telescope, restart the telescope as needed).

@@ -7,7 +7,7 @@ from astropy.coordinates import ICRS, SkyCoord
 import astropy.units as u
 import trio
 
-import telescope_control as tc
+from .. import telescope_control as tc
 
 _log = logging.getLogger(__name__)
 

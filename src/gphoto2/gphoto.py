@@ -2,8 +2,13 @@ import requests
 from datetime import date
 
 from exiftool import ExifToolHelper
-from gphoto2.util import getCurrentConfigValueFromCamera, setConfigValueOnCamera, getAllConfigFromCamera, setMultipleValuesOnCamera
-from gphoto2.canon550d import FocalLengths
+from .util import (
+    getCurrentConfigValueFromCamera,
+    setConfigValueOnCamera,
+    getAllConfigFromCamera,
+    setMultipleValuesOnCamera,
+)
+from .canon550d import FocalLengths
 
 WEATHER_API_URL = 'http://wttr.in?format="%t+%w+%m+%M+%P+%z+%h+%C"'
 
