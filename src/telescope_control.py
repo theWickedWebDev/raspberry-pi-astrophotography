@@ -1,5 +1,18 @@
 from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 import functools
+import logging
+import multiprocessing as mp
+import multiprocessing.connection as mpc
+import multiprocessing.synchronize as mps
+from threading import Condition, Event, Thread
+import time
+import traceback
+from typing import Protocol, TypeAlias
+from typing_extensions import assert_never
+
 import astropy.units as u
 from astropy.coordinates import (
     EarthLocation,
@@ -10,72 +23,71 @@ from astropy.coordinates import (
     solar_system_ephemeris,
 )
 from astropy.time import Time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
-import logging
-import multiprocessing as mp
-import multiprocessing.connection as mpc
-import multiprocessing.synchronize as mps
 import numpy as np
-from queue import Queue, Empty, Full
-from threading import Event, Lock, Thread
-import time
 import trio
-from typing import Any, Protocol, TypeAlias
 
-from lib.nsleep import nsleep
+from .activity import Activity as _Activity, ActivityStatus
+from .stepper import Stepper, StepperConfig, compute_intercept
 
 _log = logging.getLogger(__name__)
 
 TelescopeOrientation: TypeAlias = tuple[u.Quantity["angle"], u.Quantity["angle"]]
 
 
-class StepperController(Protocol):
-    def __call__(
-        self,
-        config: Config,
-        axes: list[StepperAxis],
-        actions: list[int],
-        /,
-    ):
-        ...
+@dataclass
+class _Track:
+    target: Target
+
+
+@dataclass
+class _Idle:
+    pass
+
+
+@dataclass
+class _Stop:
+    pass
+
+
+@dataclass
+class _Calibrate:
+    bearing: u.Quantity["angle"]
+    dec: u.Quantity["angle"]
+
+
+@dataclass
+class _CalibrateRelSteps:
+    bearing: int
+    dec: int
+
+
+_Goal: TypeAlias = _Track | _Idle | _Stop
+
+
+class _TelescopeActivity(_Activity):
+    _goal: _Goal
+
+    def __init__(self, goal: _Goal, cond: Condition):
+        super().__init__(cond)
+        self._goal = goal
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self._goal!r}, {self._status.name})"
 
 
 @dataclass(frozen=True)
 class StepperAxis:
     motor_steps: int
     gear_ratio: float
-    max_speed: u.Quantity["angle / time"]
+    config: StepperConfig
 
 
 @dataclass(frozen=True)
 class Config:
     bearing_axis: StepperAxis
     declination_axis: StepperAxis
-    motor_controller: StepperController
 
     location: EarthLocation
-
-    max_plan_length: int = field(default=2)
-    # FIXME: Rename this.
-    noncritical_sleep_time: u.Quantity["time"] = field(
-        default=0.1 * u.second,  # pyright: ignore
-    )
-
-
-def _angle_per_step(axis: StepperAxis) -> u.Quantity[u.rad]:
-    return 2 * np.pi / (axis.motor_steps * axis.gear_ratio) * u.rad
-
-
-def _cancel_on_error(f, cancel: Event):
-    def wrapper(*args):
-        try:
-            f(*args)
-        except:
-            cancel.set()
-            raise
-
-    return wrapper
 
 
 class Busy(Exception):
@@ -104,57 +116,35 @@ class SolarSystemTarget(Target):
             return get_body(self.name, time, location)
 
 
-@dataclass(frozen=True)
-class Segment:
-    start: TelescopeOrientation
-    end: TelescopeOrientation
-    # [deadline (ns), bearing_move (1/0/-1), dec_move (1/0/-1)]
-    moves: np.ndarray[Any, np.dtype[np.int64]]
-
-
 class TelescopeControl:
-    def __init__(
-        self,
-        config: Config,
-        orientation: TelescopeOrientation,
-        target: Target | None = None,
-    ):
+    _config: Config
+    _conn: mpc.Connection | None
+    _orientation: TelescopeOrientation
+    _target: Target | None
+
+    def __init__(self, config: Config):
         self._config = config
-
         self._conn = None
-
-        self._orientation = orientation
-        self._target = target
+        self._orientation = (
+            0 * u.hourangle,  # pyright: ignore
+            0 * u.deg,  # pyright: ignore
+        )
+        self._target = None
 
     @property
     def config(self):
         return self._config
 
-    @config.setter
-    def config(self, config: Config):
-        self._config = config
-        if self._conn:
-            self._conn.send(SetConfig(config))
-
     @property
     def orientation(self):
         return self._orientation
-
-    @orientation.setter
-    def orientation(self, orientation: TelescopeOrientation):
-        self._orientation = orientation
-        if self._conn:
-            self._conn.send(SetOrientation(orientation))
 
     @property
     def target(self):
         return self._target
 
-    @target.setter
-    def target(self, target: Target):
-        self._target = target
-        if self._conn:
-            self._conn.send(SetTarget(target))
+    def track(self, target: Target):
+        self._put_message(_Track(target))
 
     def current_skycoord(self):
         bearing, dec = self._orientation
@@ -171,10 +161,15 @@ class TelescopeControl:
             HADec(obstime=Time.now(), location=self.config.location)
         )
 
-        o: TelescopeOrientation = (tcoord.ha, tcoord.dec)  # pyright: ignore
-        self.orientation = o
+        bearing: u.Quantity["angle"] = tcoord.ha  # pyright: ignore
+        dec: u.Quantity["angle"] = tcoord.dec  # pyright: ignore
+
+        self._put_message(_Calibrate(bearing, dec))
         if track:
-            self.target = target
+            self._put_message(_Track(target))
+
+    def calibrate_rel_steps(self, bearing: int, dec: int):
+        self._put_message(_CalibrateRelSteps(bearing, dec))
 
     async def run(self):
         conn, child_conn = mp.Pipe()
@@ -197,400 +192,476 @@ class TelescopeControl:
             except:
                 stop.set()
 
+    def _put_message(self, msg: _InputMessage):
+        if self._conn is None:
+            raise RuntimeError("must be running to issue commands")
+
+        self._conn.send(msg)
+
     def _run_multiprocess(
         self,
-        conn: mpc.PipeConnection,
-        child_conn: mpc.PipeConnection,
+        conn: mpc.Connection,
+        child_conn: mpc.Connection,
         stop: mps.Event,
     ):
-        state = State(self.config, self.orientation, self.target)
-        proc = mp.Process(
-            target=_control_supervisor, args=[state, child_conn], daemon=True
-        )
-        proc.start()
-
-        while not stop.is_set():
-            if conn.poll(1):
-                msg: OutputMessage = conn.recv()
-                match msg:
-                    case PublishOrientation(orientation):
-
-                        def update():
-                            self._orientation = orientation
-
-                        trio.from_thread.run_sync(update)
-                    case PublishTarget(target):
-
-                        def update():
-                            self._target = target
-
-                        trio.from_thread.run_sync(update)
-                    case _:
-                        print(f"unhandled message: {msg}")
-
-        _log.debug("stopping")
-        conn.send(Stop())
         try:
+            proc = mp.Process(target=_mp_main, args=[self.config, child_conn])
+            proc.start()
+
+            while not stop.is_set():
+                if conn.poll(1):
+                    msg: _OutputMessage = conn.recv()
+                    match msg:
+                        case _PublishOrientation(orientation):
+
+                            def update():
+                                self._orientation = orientation
+
+                            trio.from_thread.run_sync(update)
+                        case _PublishTarget(target):
+
+                            def update():
+                                self._target = target
+
+                            trio.from_thread.run_sync(update)
+                        case _:
+                            print(f"unhandled message: {msg}")
+
+            _log.info("stopping")
+            conn.send(_Stop())
             proc.join(5)
+            if proc.exitcode is None:
+                _log.error("timed out waiting for telescope control to stop")
+                proc.kill()
         except:
-            _log.error("timed out waiting for telescope control to stop")
-            proc.kill()
+            traceback.print_exc()
 
 
 @dataclass
-class SetTarget:
-    target: Target
-
-
-@dataclass
-class SetOrientation:
-    orientation: TelescopeOrientation
-
-
-@dataclass
-class SetConfig:
-    config: Config
-
-
-@dataclass
-class PublishTarget:
+class _PublishTarget:
     target: Target | None
 
 
 @dataclass
-class PublishOrientation:
+class _PublishOrientation:
     orientation: TelescopeOrientation
 
 
+_InputMessage: TypeAlias = _Calibrate | _CalibrateRelSteps | _Goal
+_OutputMessage: TypeAlias = _PublishTarget | _PublishOrientation
+
+
+class StateFn(Protocol):
+    def __call__(
+        self,
+        ctx: _RunContext,
+        conn: mpc.Connection,
+    ) -> StateFn | None:
+        ...
+
+
 @dataclass
-class Stop:
-    pass
-
-
-InputMessage: TypeAlias = SetTarget | SetOrientation | SetConfig | Stop
-OutputMessage: TypeAlias = PublishTarget | PublishOrientation
-
-
-@dataclass
-class State:
+class _RunContext:
     config: Config
-    orientation: TelescopeOrientation
-    target: Target | None
-    lock: Lock = field(default_factory=Lock)
+    bearing_motor: Stepper
+    dec_motor: Stepper
+    bearing_offset: int = 0
+    dec_offset: int = 0
+    target: Target | None = None
+    activity: _TelescopeActivity | None = None
+    stop: Event = field(default_factory=Event)
+    cond: Condition = field(default_factory=Condition)
+    activity_cond: Condition = field(default_factory=Condition)
+
+    @property
+    def bearing_steps(self):
+        return self.bearing_motor.position + self.bearing_offset
+
+    @property
+    def dec_steps(self):
+        return self.dec_motor.position + self.dec_offset
 
 
-def _control_supervisor(state: State, conn: mpc.PipeConnection):
-    stop = Event()
+def _mp_main(config: Config, conn: mpc.Connection):
+    ctx = _RunContext(
+        config=config,
+        bearing_motor=Stepper(config.bearing_axis.config),
+        dec_motor=Stepper(config.declination_axis.config),
+    )
 
     _log.debug("telescope: starting")
-    while not stop.is_set():
-        reset = Event()
-        idle = Event()
 
-        _log.debug("telescope: running")
-        q: Queue[Segment] = Queue(state.config.max_plan_length)
+    ctx.bearing_motor.start()
+    ctx.dec_motor.start()
 
-        # TODO: It seems awkward that _state_reader is created separately, but
-        # it needs to wait for idle to be set to update some properties on
-        # `state`.  So for now, this is the best we can do.
-        state_thread = Thread(
-            target=_state_reader, args=[state, conn, reset, idle, stop]
-        )
-        state_thread.start()
-
-        threads = [
-            Thread(target=_cancel_on_error(f, reset), args=args, daemon=True)
-            for f, args in [
-                (_state_publisher, [state, conn, reset]),
-                (_planner, [state, q, reset]),
-                (_executor, [state, q, reset]),
-            ]
+    threads = [
+        Thread(target=target, args=args)
+        for target, args in [
+            (_publish_state, [ctx, conn]),
+            (_read_goals, [ctx, conn]),
         ]
+    ]
+
+    for t in threads:
+        t.start()
+
+    _log.debug("telescope: running")
+    try:
+        _run(ctx, conn)
+    except:
+        traceback.print_exc()
+    finally:
+        ctx.stop.set()
 
         for t in threads:
-            t.start()
+            t.join()
 
-        while any(t.is_alive() for t in threads):
-            if stop.wait(1):
-                reset.set()
-                for t in threads:
-                    t.join()
-                break
-
-        idle.set()
-        state_thread.join()
-
-    _log.debug("telescope: stopping")
+    _log.debug("telescope: stopped")
 
 
-def _state_reader(
-    state: State, conn: mpc.PipeConnection, reset: Event, idle: Event, stop: Event
-):
-    def reset_and_wait():
-        reset.set()
-        idle.wait()
-
-    while not reset.is_set() and not stop.is_set():
-        if conn.poll(1):
-            msg: InputMessage = conn.recv()
-            match msg:
-                case Stop():
-                    stop.set()
-                case SetTarget(target):
-                    reset_and_wait()
-                    state.target = target
-                case SetOrientation(orientation):
-                    reset_and_wait()
-                    state.orientation = orientation
-                case SetConfig(config):
-                    reset_and_wait()
-                    state.config = config
-                case _:
-                    print(f"unhandled msg: {msg}")
+# TODO: Rename this?
+def _run(ctx: _RunContext, conn: mpc.Connection):
+    statefn: StateFn | None = _run_dispatch
+    while statefn is not None:
+        statefn = statefn(ctx, conn)
 
 
-def _state_publisher(state: State, conn: mpc.PipeConnection, cancel: Event):
-    prev_orientation = None
-    prev_target = None
-
-    # TODO: Configurable interval
-    while not cancel.wait(0.5):
-        with state.lock:
-            orientation = state.orientation
-            target = state.target
-
-        if orientation is not prev_orientation:
-            prev_orientation = orientation
-            conn.send(PublishOrientation(orientation))
-        if target is not prev_target:
-            prev_target = target
-            conn.send(PublishTarget(target))
-
-
-def _planner(state: State, q: Queue[Segment], cancel: Event):
-    if state.target is None:
-        return
-
-    _log.debug("planner: start")
-
-    axis_speeds = np.array(
-        [
-            axis.max_speed.to(u.rad / u.s).value
-            for axis in [
-                state.config.bearing_axis,
-                state.config.declination_axis,
-            ]
-        ]
-    )
-
-    planned_to_time = time.time_ns()
-    xtrem = 0
-    ytrem = 0
-
-    with state.lock:
-        planned_to_pos = state.orientation
-        target = state.target
-
-    if target is None:
-        cancel.set()
-        return
-
-    while not cancel.is_set():
-        _log.debug("planner: create segment")
-        start_ha, start_dec = planned_to_pos
-
-        # FIXME: predict_time_ns doesn't work well with larger values, because
-        # we can overshoot.  The offset calculation below needs to adaptively
-        # reduce the segment time.  For now, 1 second works well enough.
-        predict_time_ns = 1_000_000_000
-        predict_dt = predict_time_ns * u.nanosecond  # pyright: ignore
-        end_time_ns = planned_to_time + predict_time_ns
-
-        start_time = Time(
-            datetime.fromtimestamp(planned_to_time / 1_000_000_000, timezone.utc)
-        )
-        present = HADec(obstime=start_time, location=state.config.location)
-        future = HADec(obstime=start_time + predict_dt, location=state.config.location)
-
-        pos = SkyCoord(start_ha, start_dec, frame=present)
-        fut_tgt = target.coordinate(
-            start_time + predict_dt, state.config.location
-        ).transform_to(future)
-
-        delta = np.array(_raw_orientation_radians(fut_tgt)) - np.array(
-            _raw_orientation_radians(pos)
-        )
-
-        start = _raw_orientation_radians(pos)
-
-        times_to_fut_tgt = np.abs(delta) / axis_speeds
-        mag = np.linalg.norm(delta)
-        dir = delta / mag
-        offset = (
-            dir
-            * mag
-            * predict_dt.to(u.second).value
-            / np.max(np.append(times_to_fut_tgt, 1))
-        )
-        end = (start[0] + offset[0], start[1] + offset[1])
-
-        xsteps, x_true_end, xtrem = calc_axis_steps(
-            start[0],
-            planned_to_time,
-            end[0],
-            end_time_ns,
-            _angle_per_step(state.config.bearing_axis).value,
-            xtrem,
-        )
-
-        ysteps, y_true_end, ytrem = calc_axis_steps(
-            start[1],
-            planned_to_time,
-            end[1],
-            end_time_ns,
-            _angle_per_step(state.config.declination_axis).value,
-            ytrem,
-        )
-
-        end_pos: TelescopeOrientation = x_true_end * u.rad, y_true_end * u.rad
-        start_pos = planned_to_pos
-        planned_to_pos = end_pos
-        planned_to_time = end_time_ns
-
-        moves = combine_moves(xsteps, ysteps)
-        if moves.size == 0:
-            continue
-
-        segment = Segment(start_pos, end_pos, moves)
-
-        while True:
-            if cancel.is_set():
-                break
-            try:
-                q.put(segment, timeout=0.5)
-                break
-            except Full:
+def _finalize_activity(activity: _TelescopeActivity):
+    with activity._cond:
+        match activity._status:
+            case ActivityStatus.PENDING | ActivityStatus.ABORTING:
+                activity._status = ActivityStatus.ABORTED
+            case ActivityStatus.ACTIVE:
+                activity._status = ActivityStatus.COMPLETE
+            case ActivityStatus.ABORTED | ActivityStatus.COMPLETE:
                 pass
+            case _:
+                assert_never(activity._status)
+        activity._cond.notify_all()
 
-    _log.debug("planner: stop")
+
+def _clear_activity(ctx: _RunContext, activity: _TelescopeActivity):
+    with ctx.cond:
+        if ctx.activity is activity:
+            ctx.activity = None
+            ctx.cond.notify()
 
 
-def _executor(state: State, q: Queue[Segment], cancel: Event):
-    _log.debug("executor: start")
+def _run_dispatch(ctx: _RunContext, conn: mpc.Connection) -> StateFn:
+    with ctx.cond:
+        ctx.cond.wait_for(lambda: ctx.activity is not None)
+        activity = ctx.activity
+        assert activity is not None
 
-    while not cancel.is_set():
-        segment = None
-        while segment is None:
-            if cancel.is_set():
-                return
-            try:
-                segment = q.get(block=True, timeout=0.1)
-            except Empty:
-                # TODO: Notify about starvation.  The planner should stay ahead
-                # of the executor.
-                pass
+    with activity._cond:
+        activity._status = ActivityStatus.ACTIVE
+        activity._cond.notify_all()
+
+    match activity._goal:
+        case _Track():
+            return _run_track(activity)
+        case _Stop():
+            return _run_stop(activity)
+        case _Idle():
+            return _run_idle(activity)
+        case _:
+            assert_never(activity._goal)
+
+
+def _read_goals(ctx: _RunContext, conn: mpc.Connection):
+    while True:
+        msg: _InputMessage = conn.recv()
+        match msg:
+            case (_Track() | _Stop() | _Idle()) as goal:
+                with ctx.cond:
+                    if ctx.activity is not None:
+                        _log.debug(f"canceling activity: {ctx.activity}")
+                        ctx.activity.cancel()
+                    ctx.activity = _TelescopeActivity(goal, ctx.activity_cond)
+                    _log.debug(f"set activity: {ctx.activity}")
+                    ctx.cond.notify()
+
+                if isinstance(goal, _Stop):
+                    break
+            case _Calibrate(bearing, dec):
+                with ctx.cond:
+                    ctx.bearing_offset = round(
+                        _angle_to_steps(ctx.config.bearing_axis, bearing)
+                        - ctx.bearing_motor.position
+                    )
+                    ctx.dec_offset = round(
+                        _angle_to_steps(ctx.config.declination_axis, dec)
+                        - ctx.dec_motor.position
+                    )
+                # TODO: Need to cancel any running action?  Could get weird.
+                _log.info(f"calibrated: {ctx.bearing_offset}, {ctx.dec_offset}")
+            case _CalibrateRelSteps(bearing, dec):
+                with ctx.cond:
+                    ctx.bearing_offset += bearing
+                    ctx.dec_offset += dec
+            case _:
+                assert_never(msg)
+
+
+_: StateFn = _run_dispatch
+
+_ActivityGroup = list[_Activity]
+
+
+def _ag_cancel_all(groups: list[_ActivityGroup]):
+    for group in groups:
+        for act in group:
+            act.cancel()
+
+    for group in groups:
+        for act in group:
+            act.wait_for(ActivityStatus.done)
+
+
+def _ag_wait_one_group(parent: _TelescopeActivity, groups: list[_ActivityGroup]):
+    if len(groups) == 0:
+        raise ValueError("activity_groups must not be empty")
+
+    for act in groups[0]:
+        while not act.wait_for(ActivityStatus.done, timeout=0.5):
+            if parent._canceled:
+                with parent._cond:
+                    parent._status = ActivityStatus.ABORTING
+                    parent._cond.notify_all()
+                _ag_cancel_all(groups)
+                with parent._cond:
+                    parent._status = ActivityStatus.ABORTED
+                    parent._cond.notify_all()
+                return False
+    groups.pop(0)
+
+    return True
+
+
+def _run_track(activity: _TelescopeActivity) -> StateFn:
+    assert isinstance(activity._goal, _Track)
+    goal = activity._goal
+
+    def run_track(ctx: _RunContext, conn: mpc.Connection):
+        if activity._canceled:
+            _finalize_activity(activity)
+            _clear_activity(ctx, activity)
+            return _run_dispatch
+
+        with ctx.cond:
+            ctx.target = goal.target
+            ctx.cond.notify_all()
 
         try:
-            # FIXME: Handle exceptions in `execute`.
-            _execute_segment(state, segment, cancel)
+            # TODO: Make predict_dt_ns configurable.
+            predict_dt_ns = 30_000_000_000
+            predict_dt = predict_dt_ns * u.nanosecond  # pyright: ignore
+
+            # Predict target location a short time in the future (to leave time
+            # for the initial calculations)
+            planned_to_ns = time.time_ns() + 100_000_000
+            planned_to_time = Time(
+                datetime.fromtimestamp(planned_to_ns / 1_000_000_000, timezone.utc)
+            )
+
+            tgt_bearing_steps, tgt_dec_steps = _predict_pos(
+                ctx, goal.target, planned_to_time
+            )
+
+            tgt_bearing_vel, tgt_dec_vel = _predict_vel(
+                ctx, goal.target, planned_to_time, predict_dt
+            )
+
+            bearing_params = compute_intercept(
+                ctx.bearing_motor.config,
+                ctx.bearing_steps,
+                ctx.bearing_motor.velocity,
+                tgt_bearing_steps,
+                tgt_bearing_vel,  # target_velocity
+                tgt_bearing_vel,  # target_velocity
+            )
+
+            dec_params = compute_intercept(
+                ctx.dec_motor.config,
+                ctx.dec_steps,
+                ctx.dec_motor.velocity,
+                tgt_dec_steps,  # target
+                tgt_dec_vel,  # target_velocity
+                tgt_dec_vel,  # target_velocity
+            )
+
+            activity_groups: list[_ActivityGroup] = []
+
+            intercept_group = [
+                ctx.bearing_motor.intercept_precomputed(bearing_params, planned_to_ns),
+                ctx.dec_motor.intercept_precomputed(dec_params, planned_to_ns),
+            ]
+            if bearing_params.t < dec_params.t:
+                dt = dec_params.t - bearing_params.t
+                deadline_ns = planned_to_ns + round(dt * 1_000_000_000)
+                intercept_group.append(
+                    ctx.bearing_motor.run_constant(tgt_bearing_vel, deadline_ns)
+                )
+            elif bearing_params.t > dec_params.t:
+                dt = bearing_params.t - dec_params.t
+                deadline_ns = planned_to_ns + round(dt * 1_000_000_000)
+                intercept_group.append(
+                    ctx.dec_motor.run_constant(tgt_dec_vel, deadline_ns)
+                )
+            else:
+                _log.debug("lucky you! synchronicity.")
+            planned_to_ns += round(max(dec_params.t, bearing_params.t) * 1_000_000_000)
+            activity_groups.append(intercept_group)
+
+            while True:
+                # NOTE: Assuming velocity doesn't change too much, so we don't need
+                # a ramp.  For more dynamic objects, the situation would be more
+                # complex.
+
+                planned_to_time = Time(
+                    datetime.fromtimestamp(planned_to_ns / 1_000_000_000, timezone.utc)
+                )
+                tgt_bearing_vel, tgt_dec_vel = _predict_vel(
+                    ctx, goal.target, planned_to_time, predict_dt
+                )
+
+                # HACK: Until we have a quantization error accumulator for very
+                # small velocities, execute very long run_constant commands.
+
+                run_dt_ns = int(
+                    1_000_000_000 / min(abs(tgt_bearing_vel), abs(tgt_dec_vel))
+                )
+                _log.info(
+                    f"planning tracking segment: {run_dt_ns / 1_000_000_000:.2f} s"
+                )
+
+                planned_to_ns += run_dt_ns
+                activity_groups.append(
+                    [
+                        ctx.bearing_motor.run_constant(tgt_bearing_vel, planned_to_ns),
+                        ctx.dec_motor.run_constant(tgt_dec_vel, planned_to_ns),
+                    ]
+                )
+
+                if not _ag_wait_one_group(activity, activity_groups):
+                    if activity_groups[0] == intercept_group:
+                        _log.info("canceled while intercepting")
+                    else:
+                        _log.info("canceled while tracking")
+                    break
+
+            _finalize_activity(activity)
+            _clear_activity(ctx, activity)
+            return _run_dispatch
         finally:
-            q.task_done()
+            with ctx.cond:
+                ctx.target = None
+                ctx.cond.notify_all()
 
-    _log.debug("executor: stop")
-
-
-def _execute_segment(state: State, segment: Segment, cancel: Event):
-    _log.debug("execute_segment: start")
-
-    bearing_axis = state.config.bearing_axis
-    dec_axis = state.config.declination_axis
-
-    with state.lock:
-        cur_ha, cur_dec = state.orientation
-
-    deadline: int
-    bearing_move: int
-    dec_move: int
-    for deadline, bearing_move, dec_move in segment.moves:
-        if cancel.is_set():
-            break
-
-        sleep_ns = deadline - time.time_ns()
-        if sleep_ns > 0:
-            nsleep(sleep_ns)
-        else:
-            # TODO: Warn that we're running behind.
-            pass
-
-        if cancel.is_set():
-            break
-
-        state.config.motor_controller(
-            state.config, [bearing_axis, dec_axis], [bearing_move, dec_move]
-        )
-
-        cur_ha += bearing_move * _angle_per_step(bearing_axis)
-        cur_dec += dec_move * _angle_per_step(dec_axis)
-
-        with state.lock:
-            state.orientation = cur_ha, cur_dec  # pyright: ignore
-
-    _log.debug("execute_segment: stop")
+    return run_track
 
 
-def calc_axis_steps(
-    start: float,
-    start_time: int,
-    end: float,
-    end_time: int,
-    step_size: float,
-    time_remainder: int,
-) -> tuple[np.ndarray, float, int]:
-    """
-    Make an array of [deadline, -1/1] for axis movement, and return the last
-    calculated value and time (to be used as start, start_time on subsequent
-    invocations).
-    """
+def _predict_pos_raw(config: Config, target: Target, t: Time):
+    """returns values in angle / time"""
 
-    d = end - start
-    dt = end_time - start_time
+    frame = HADec(obstime=t, location=config.location)
+    hadec = target.coordinate(t, config.location).transform_to(frame)
 
-    adj_start_time = start_time - time_remainder
-    adj_dt = end_time - adj_start_time
+    bearing = hadec.ha.to(u.rad)  # pyright: ignore
+    dec = hadec.dec.to(u.rad)  # pyright: ignore
 
-    steps = abs(d / step_size)
-    step_time = adj_dt / steps
+    return bearing, dec
 
-    xs = (
-        np.arange(adj_start_time + step_time, end_time, step_time)
-        .round()
-        .astype(np.int64)[:, np.newaxis]
+
+def _predict_pos(ctx: _RunContext, target: Target, t: Time):
+    """returns values in steps"""
+    bearing, dec = _predict_pos_raw(ctx.config, target, t)
+
+    return (
+        _angle_to_steps(ctx.config.bearing_axis, bearing),
+        _angle_to_steps(ctx.config.declination_axis, dec),
     )
-    xs = np.append(xs, np.full_like(xs, int(np.sign(d))), axis=1)
-
-    if xs.size == 0:
-        true_end = start
-        time_remainder += dt
-    else:
-        true_end = start + xs.shape[0] * np.sign(d) * step_size
-        time_remainder = end_time - xs[-1, 0]
-
-    return xs, true_end, time_remainder
 
 
-def combine_moves(xsteps: np.ndarray, ysteps: np.ndarray):
-    moves = np.concatenate(
-        (
-            np.insert(xsteps, 2, np.zeros(xsteps.shape[0]), axis=1),
-            np.insert(ysteps, 1, np.zeros(ysteps.shape[0]), axis=1),
-        ),
-        axis=0,
-    )
-    return moves[moves[:, 0].argsort()]
+def _predict_vel(
+    ctx: _RunContext, target: Target, t: Time, predict_dt: u.Quantity["time"]
+):
+    """returns values in steps / s"""
+    t0 = t
+    t1 = t + predict_dt
+
+    tgt_bearing_t0, tgt_dec_t0 = _predict_pos_raw(ctx.config, target, t0)
+    tgt_bearing_t1, tgt_dec_t1 = _predict_pos_raw(ctx.config, target, t1)
+
+    ha_vel = (tgt_bearing_t1 - tgt_bearing_t0) / predict_dt.to(u.s).value
+    dec_vel = (tgt_dec_t1 - tgt_dec_t0) / predict_dt.to(u.s).value
+
+    bearing_vel_steps = (
+        ha_vel.to(u.rad) / _angle_per_step(ctx.config.bearing_axis).to(u.rad)
+    ).value
+    dec_vel_steps = (
+        dec_vel.to(u.rad) / _angle_per_step(ctx.config.declination_axis).to(u.rad)
+    ).value
+
+    return bearing_vel_steps, dec_vel_steps
 
 
-def _raw_orientation_radians(c: SkyCoord) -> tuple[float, float]:
-    ha: u.Quantity["angle"] = c.ha  # pyright: ignore
-    dec: u.Quantity["angle"] = c.dec  # pyright: ignore
+def _angle_per_step(axis: StepperAxis) -> u.Quantity["angle"]:
+    return 2 * np.pi / (axis.motor_steps * axis.gear_ratio) * u.rad
 
-    return ha.to(u.rad).value, dec.to(u.rad).value
+
+def _angle_to_steps(axis: StepperAxis, a: u.Quantity["angle"]) -> int:
+    return round(a.to(u.rad).value / _angle_per_step(axis).to(u.rad).value)
+
+
+def _steps_to_angle(axis: StepperAxis, steps: int) -> u.Quantity["angle"]:
+    return steps * _angle_per_step(axis)
+
+
+def _run_idle(activity: _TelescopeActivity) -> StateFn:
+    assert isinstance(activity._goal, _Idle)
+
+    def run_idle(ctx: _RunContext, conn: mpc.Connection):
+        _log.info("going idle")
+        return _run_dispatch
+
+    return run_idle
+
+
+def _run_stop(activity: _TelescopeActivity) -> StateFn:
+    assert isinstance(activity._goal, _Stop)
+
+    def run_stop(ctx: _RunContext, conn: mpc.Connection):
+        _log.info("stopping")
+        ctx.stop.set()
+        return None
+
+    return run_stop
+
+
+def _publish_state(ctx: _RunContext, conn: mpc.Connection):
+    prev_bearing_steps = None
+    prev_dec_steps = None
+    prev_target = None
+
+    cfg = ctx.config
+
+    # TODO: Configurable interval
+    while not ctx.stop.wait(0.1):
+        with ctx.cond:
+            target = ctx.target
+            bearing_steps = ctx.bearing_steps
+            dec_steps = ctx.dec_steps
+
+        if bearing_steps != prev_bearing_steps or dec_steps != prev_dec_steps:
+            prev_bearing_steps = bearing_steps
+            prev_dec_steps = dec_steps
+
+            orientation = (
+                _steps_to_angle(cfg.bearing_axis, bearing_steps),
+                _steps_to_angle(cfg.declination_axis, dec_steps),
+            )
+            conn.send(_PublishOrientation(orientation))
+        if target is not prev_target:
+            prev_target = target
+            conn.send(_PublishTarget(target))

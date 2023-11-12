@@ -123,6 +123,6 @@ async def _read_target(stream: trio.SocketStream, telescope: tc.TelescopeControl
     )
 
     _log.info(f"target: {coord}")
-    telescope.target = tc.FixedTarget(coord)
+    telescope.track(tc.FixedTarget(coord))
 
     return True

@@ -1,3 +1,5 @@
+from threading import Lock
+
 import RPi.GPIO as GPIO
 
 from . import gpio
@@ -17,15 +19,19 @@ DEC_PINS = dict(
 
 PULSE_NS = 50_000
 
+# TODO: Figure out a nicer way to avoid simultaneous pulses clashing.
+_PULSE_LOCK = Lock()
+
 
 def step(pins, dir):
-    leading(pins, dir)
-    # Propagation
-    nsleep(PULSE_NS)
-    trailing(pins)
+    with _PULSE_LOCK:
+        _leading(pins, dir)
+        # Propagation
+        nsleep(PULSE_NS)
+        _trailing(pins)
 
 
-def leading(pins: dict, dir):
+def _leading(pins: dict, dir):
     # Set direction; forward=0 backward=1
     GPIO.output(pins["dir"], dir)
     # Enable Motor
@@ -34,7 +40,7 @@ def leading(pins: dict, dir):
     GPIO.output(pins["pul"], 1)
 
 
-def trailing(pins: dict):
+def _trailing(pins: dict):
     # Falling Edge
     GPIO.output(pins["pul"], 0)
     # Disable Motor

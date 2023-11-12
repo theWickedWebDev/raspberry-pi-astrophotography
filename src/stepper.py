@@ -2,20 +2,37 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import logging
-from enum import Enum, IntEnum, auto
+from enum import IntEnum
 import math
 from queue import Queue
 from threading import Condition, Lock, Thread
 import time
-from typing import Callable, Protocol, TypeAlias, TypeVar
+from typing import Protocol, TypeAlias
 from typing_extensions import assert_never
 
 import numpy as np
 
+from .activity import Activity as _Activity, ActivityStatus
 from .lib.nsleep import nsleep
-from .motion import pulse_times_trapz, travel_linaccel, trapz_intercept_info
+from .motion import (
+    pulse_times_linaccel,
+    pulse_times_trapz,
+    travel_linaccel,
+    trapz_intercept_info,
+)
 
-_log = logging.Logger(__name__)
+_log = logging.getLogger(__name__)
+
+# TODO: In Stepper, track an error term for desired fractional steps so abutting
+# activities with very slow movements can work perfectly.  Right now this gets
+# worked around in TelescopeControl by issuing very long run_constant commands
+# that guarantee a whole number of steps will occur.  This is inconvenient, and
+# it would be better if Stepper handled fractional moves itself.
+
+
+class _PulseFn(Protocol):
+    def __call__(self, /, stepper: Stepper, direction: StepDir) -> None:
+        ...
 
 
 @dataclass(frozen=True)
@@ -24,28 +41,25 @@ class StepperConfig:
     max_speed: float  # steps/s
     max_accel: float  # steps/s/s
     max_decel: float  # steps/s/s
+    pulse: _PulseFn
+    max_interval_ns: int = 50_000_000
 
 
-class _Direction(IntEnum):
+class StepDir(IntEnum):
     FWD = 1
     NOP = 0
     REV = -1
 
 
-class ActivityStatus(Enum):
-    PENDING = auto()
+class _StepperActivity(_Activity):
+    _goal: _Goal
 
-    ACTIVE = auto()
-    COMPLETE = auto()
+    def __init__(self, goal: _Goal, cond: Condition):
+        super().__init__(cond)
+        self._goal = goal
 
-    ABORTING = auto()
-    ABORTED = auto()
-
-    def running(self):
-        return self in [ActivityStatus.ACTIVE, ActivityStatus.ABORTING]
-
-    def done(self):
-        return self in [ActivityStatus.COMPLETE, ActivityStatus.ABORTED]
+    def __repr__(self):
+        return f"{self.__class__.__name__}({self._goal!r}, {self._status.name})"
 
 
 @dataclass
@@ -56,12 +70,19 @@ class _Intercept:
 
 
 @dataclass
+class _InterceptPrecomputed:
+    params: InterceptParams
+    start_ns: int
+
+
+@dataclass
 class _RunConstant:
     velocity: float
     deadline_ns: int
 
 
-# TODO: Rename to _Noop?  Maybe it could be eliminated?
+# TODO: Rename to _Noop?  Maybe it could be eliminated?  Maybe _Idle should spin
+# down to zero velocity, if needed?
 @dataclass
 class _Idle:
     pass
@@ -72,40 +93,10 @@ class _Stop:
     pass
 
 
-_Goal: TypeAlias = _Intercept | _RunConstant | _Idle | _Stop
+_Goal: TypeAlias = _InterceptPrecomputed | _Intercept | _RunConstant | _Idle | _Stop
 
 
-_T = TypeVar("_T")
-
-
-class Activity:
-    _goal: _Goal
-    _status: ActivityStatus
-    _cond: Condition
-    _canceled: bool
-
-    def __init__(self, goal: _Goal, cond: Condition):
-        self._goal = goal
-        self._status = ActivityStatus.PENDING
-        self._cond = cond
-        self._canceled = False
-
-    def wait_for(
-        self, pred: Callable[[ActivityStatus], _T], timeout: float | None = None
-    ) -> _T:
-        with self._cond:
-            return self._cond.wait_for(lambda: pred(self._status), timeout)
-
-    def cancel(self):
-        with self._cond:
-            self._canceled = True
-            self._cond.notify_all()
-
-    def __repr__(self):
-        return f"Activity({self._goal!r}, {self._status.name})"
-
-
-_MotionQueue: TypeAlias = Queue[tuple[int, _Direction] | Activity]
+_MotionQueue: TypeAlias = Queue[tuple[int, StepDir] | _StepperActivity]
 
 
 @dataclass
@@ -121,10 +112,10 @@ class _PlanContext:
     commit_deadline: int
 
 
-class StateFn(Protocol):
+class _StateFn(Protocol):
     def __call__(
         self, stepper: Stepper, motion: _MotionQueue, ctx: _PlanContext
-    ) -> StateFn | None:
+    ) -> _StateFn | None:
         ...
 
 
@@ -135,7 +126,7 @@ class Stepper:
 
     _lock: Lock
     _run_state: _RunState | None
-    _activities: Queue[Activity]
+    _activities: Queue[_StepperActivity]
     _activity_fallback_cond: Condition
 
     def __init__(
@@ -154,9 +145,18 @@ class Stepper:
         self._activity_fallback_cond = Condition()
 
     @property
+    def config(self):
+        return self._config
+
+    @property
     def position(self):
         with self._lock:
             return self._position
+
+    @property
+    def velocity(self):
+        with self._lock:
+            return self._velocity
 
     def goto(
         self,
@@ -168,6 +168,14 @@ class Stepper:
 
     def idle(self, cond: Condition | None = None):
         return self._put_activity(_Idle(), cond)
+
+    def intercept_precomputed(
+        self,
+        params: InterceptParams,
+        start_ns: int,
+        cond: Condition | None = None,
+    ):
+        return self._put_activity(_InterceptPrecomputed(params, start_ns), cond)
 
     def intercept(
         self,
@@ -190,8 +198,8 @@ class Stepper:
     ):
         return self._put_activity(_RunConstant(velocity, deadline_ns), cond)
 
-    def _put_activity(self, goal: _Goal, cond: Condition | None) -> Activity:
-        activity = Activity(goal, cond or self._activity_fallback_cond)
+    def _put_activity(self, goal: _Goal, cond: Condition | None) -> _Activity:
+        activity = _StepperActivity(goal, cond or self._activity_fallback_cond)
         self._activities.put(activity)
         return activity
 
@@ -201,7 +209,7 @@ class Stepper:
                 return
 
             # TODO: Make plan ahead steps configurable
-            motion: _MotionQueue = Queue(maxsize=10)
+            motion: _MotionQueue = Queue(maxsize=4)
 
             run_state = _RunState(
                 plan_thread=Thread(target=self._plan, args=[motion]),
@@ -239,14 +247,14 @@ class Stepper:
                 time.time_ns(),
             )
 
-        statefn = _plan_dispatch
+        statefn: _StateFn | None = _plan_dispatch
         while statefn is not None:
             statefn = statefn(self, motion, ctx)
 
     def _move(self, motion: _MotionQueue):
         while True:
             item = motion.get()
-            if isinstance(item, Activity):
+            if isinstance(item, _StepperActivity):
                 with item._cond:
                     match item._status:
                         case ActivityStatus.ABORTING:
@@ -254,9 +262,9 @@ class Stepper:
                         case ActivityStatus.ACTIVE:
                             item._status = ActivityStatus.COMPLETE
                         case _:
-                            assert (
-                                False
-                            ), f"unexpected Activity status: {item._status} on {item._goal}"
+                            raise RuntimeError(
+                                f"unexpected activity status: {item._status} on {item._goal}"
+                            )
 
                     item._cond.notify_all()
 
@@ -271,21 +279,88 @@ class Stepper:
 
                 sleep_ns = deadline - now
                 if sleep_ns < self._config.min_sleep_ns:
-                    # FIXME: Better telemetry
-                    _log.warn(f"running behind: {sleep_ns}")
-                    deadline = now + self._config.min_sleep_ns
+                    if d != StepDir.NOP:
+                        # FIXME: Better telemetry
+                        _log.warn(f"running behind: {sleep_ns / 1_000_000_000}")
+                    sleep_ns = self._config.min_sleep_ns
 
                 nsleep(sleep_ns)
 
+                if d != StepDir.NOP:
+                    self.config.pulse(self, d)
+
                 with self._lock:
-                    if d != _Direction.NOP:
-                        # FIXME: Actually pulse the motor.
-                        pass
                     self._position += d
                     # FIXME: Calculate velocity
                     self._velocity = 0
             finally:
                 motion.task_done()
+
+
+@dataclass(frozen=True)
+class InterceptParams:
+    # TODO: Capture inputs also?
+
+    delta: int
+    t: float
+    v_c: float
+    a_in: float
+    a_out: float
+    p_f: int
+    v_f: float
+
+
+def compute_intercept(
+    config: StepperConfig,
+    position: int,
+    velocity: float,
+    target: int,
+    target_velocity: float,
+    final_velocity: float,
+) -> InterceptParams:
+    # TODO: Does this need to be configurable?  Callers can easily do this
+    # calculation if they need to.
+    # t0 = 0
+    # target_t0 = target + t0 * target_velocity
+
+    scratch_delta = target - position
+
+    if scratch_delta == 0:
+        return InterceptParams(
+            delta=0,
+            t=0,
+            v_c=0,
+            a_in=0,
+            a_out=0,
+            p_f=position,
+            v_f=final_velocity,
+        )
+
+    a_in = math.copysign(config.max_accel, scratch_delta)
+    a_out = -math.copysign(config.max_decel, scratch_delta)
+
+    info = trapz_intercept_info(
+        config.max_speed,
+        a_in,
+        a_out,
+        position,
+        velocity,
+        final_velocity,
+        target,
+        target_velocity,
+    )
+
+    p_f = round(info["p_f"])
+    delta = round(info["p_f"]) - position
+    return InterceptParams(
+        delta=delta,
+        t=info["t"],
+        v_c=info["v_c"],
+        a_in=a_in,
+        a_out=a_out,
+        p_f=p_f,
+        v_f=final_velocity,
+    )
 
 
 def _plan_dispatch(stepper: Stepper, motion: _MotionQueue, ctx: _PlanContext):
@@ -302,16 +377,16 @@ def _plan_dispatch(stepper: Stepper, motion: _MotionQueue, ctx: _PlanContext):
             if isinstance(g, _Stop):
                 return None
             return _plan_dispatch
-        case _Intercept(_):
+        case _Intercept() | _InterceptPrecomputed():
             return _plan_intercept(activity)
-        case _RunConstant(_):
+        case _RunConstant():
             return _plan_run_constant(activity)
         case _:
             assert_never(activity._goal)
 
 
-def _plan_intercept(activity: Activity) -> StateFn:
-    assert isinstance(activity._goal, _Intercept)
+def _plan_intercept(activity: _StepperActivity) -> _StateFn:
+    assert isinstance(activity._goal, (_Intercept, _InterceptPrecomputed))
     goal = activity._goal
 
     def plan_intercept(stepper: Stepper, motion: _MotionQueue, ctx: _PlanContext):
@@ -321,45 +396,42 @@ def _plan_intercept(activity: Activity) -> StateFn:
             activity._status = ActivityStatus.ACTIVE
             activity._cond.notify_all()
 
-        cfg = stepper._config
-
         now = time.time_ns()
         # TODO: Need to incorporate Config.min_sleep_ns?
-        start_ns = max(ctx.commit_deadline, now)
-        t0 = (start_ns - now) / 1_000_000_000
-        target_t0 = goal.target + t0 * goal.target_velocity
+        ctx.commit_deadline = max(ctx.commit_deadline, now)
+        match goal:
+            case _InterceptPrecomputed(params, start_ns):
+                # Just extract params and start_ns
+                pass
+            case _Intercept():
+                start_ns = ctx.commit_deadline
 
-        scratch_delta = target_t0 - ctx.commit_pos
+                t0 = (start_ns - now) / 1_000_000_000
+                target_t0 = goal.target + t0 * goal.target_velocity
 
-        a_in = math.copysign(cfg.max_accel, scratch_delta)
-        a_out = -math.copysign(cfg.max_decel, scratch_delta)
+                params = compute_intercept(
+                    stepper._config,
+                    ctx.commit_pos,
+                    ctx.commit_vel,
+                    round(target_t0),
+                    goal.target_velocity,
+                    goal.final_velocity,
+                )
 
-        info = trapz_intercept_info(
-            cfg.max_speed,
-            a_in,
-            a_out,
-            ctx.commit_pos,
-            ctx.commit_vel,
-            goal.final_velocity,
-            target_t0,
-            goal.target_velocity,
-        )
-
-        delta = round(info["p_f"]) - ctx.commit_pos
-        if delta == 0:
+        if params.delta == 0:
             motion.put(activity)
             return _plan_dispatch
 
-        dir = _Direction.FWD if delta > 0 else _Direction.REV
+        dir = StepDir.FWD if params.delta > 0 else StepDir.REV
         deadlines = (
             start_ns
             + pulse_times_trapz(
                 ctx.commit_vel,
-                goal.final_velocity,
-                info["v_c"],
-                a_in,
-                a_out,
-                delta,
+                params.v_f,
+                params.v_c,
+                params.a_in,
+                params.a_out,
+                params.delta,
             )
             * 1_000_000_000
         ).astype(np.int64)
@@ -373,6 +445,16 @@ def _plan_intercept(activity: Activity) -> StateFn:
                 if activity._canceled:
                     return _plan_abort(activity)
 
+            for d in _nop_deadlines(
+                ctx.commit_deadline,
+                deadline,
+                stepper.config.max_interval_ns,
+            ):
+                with activity._cond:
+                    if activity._canceled:
+                        return _plan_abort(activity)
+                motion.put((d, StepDir.NOP))
+
             ctx.commit_deadline = deadline
             ctx.commit_pos += dir
             ctx.commit_vel = velocity
@@ -384,7 +466,7 @@ def _plan_intercept(activity: Activity) -> StateFn:
     return plan_intercept
 
 
-def _plan_run_constant(activity: Activity) -> StateFn:
+def _plan_run_constant(activity: _StepperActivity) -> _StateFn:
     assert isinstance(activity._goal, _RunConstant)
     goal = activity._goal
 
@@ -394,65 +476,82 @@ def _plan_run_constant(activity: Activity) -> StateFn:
             activity._status = ActivityStatus.ACTIVE
             activity._cond.notify_all()
 
+        ctx.commit_deadline = max(ctx.commit_deadline, time.time_ns())
+
         if goal.velocity == 0:
             if ctx.commit_deadline < goal.deadline_ns:
-                motion.put((goal.deadline_ns, _Direction.NOP))
+                ctx.commit_deadline = goal.deadline_ns
+                motion.put((goal.deadline_ns, StepDir.NOP))
             motion.put(activity)
             return _plan_dispatch
 
         # TODO: Deal with quantization errors (should be pretty small)
         interval = abs(1_000_000_000 / goal.velocity)
-        dir = _Direction.FWD if goal.velocity > 0 else _Direction.REV
+        dir = StepDir.FWD if goal.velocity > 0 else StepDir.REV
 
-        while True:
+        done = False
+        while not done:
             with activity._cond:
                 if activity._canceled:
                     return _plan_abort(activity)
 
             deadline = round(ctx.commit_deadline + interval)
             if deadline > goal.deadline_ns:
-                if ctx.commit_deadline < goal.deadline_ns:
-                    motion.put((goal.deadline_ns, _Direction.NOP))
-                motion.put(activity)
-                return _plan_dispatch
+                done = True
+                deadline = goal.deadline_ns
+
+            for d in _nop_deadlines(
+                ctx.commit_deadline,
+                deadline,
+                stepper.config.max_interval_ns,
+            ):
+                with activity._cond:
+                    if activity._canceled:
+                        return _plan_abort(activity)
+                motion.put((d, StepDir.NOP))
 
             ctx.commit_deadline = deadline
             ctx.commit_pos += dir
             ctx.commit_vel = goal.velocity
             motion.put((deadline, dir))
 
+        motion.put(activity)
+        return _plan_dispatch
+
     return plan_run_constant
 
 
-def _plan_abort(activity: Activity) -> StateFn:
+def _plan_abort(activity: _StepperActivity) -> _StateFn:
     def plan_abort(stepper: Stepper, motion: _MotionQueue, ctx: _PlanContext):
         with activity._cond:
             activity._status = ActivityStatus.ABORTING
             activity._cond.notify_all()
 
-        if ctx.commit_vel == 0 or ctx.commit_deadline is None:
+        ctx.commit_deadline = max(ctx.commit_deadline, time.time_ns())
+
+        if ctx.commit_vel == 0:
+            motion.put(activity)
             return _plan_dispatch
 
-        dir = _Direction.FWD if ctx.commit_vel > 0 else _Direction.REV
-        steps = np.ceil(travel_linaccel(ctx.commit_vel, 0, -stepper._config.max_decel))
         cfg = stepper._config
+
+        dir = StepDir.FWD if ctx.commit_vel > 0 else StepDir.REV
+        a_out = -math.copysign(cfg.max_decel, ctx.commit_vel)
+        steps_frac = travel_linaccel(ctx.commit_vel, 0, a_out)
+        # TODO: It would be better to round away from zero, but it's not
+        # convenient with numpy or the std lib.  So, we just always add one
+        # extra step.
+        steps = int(np.trunc(steps_frac) + math.copysign(1, steps_frac))
+
         deadlines = (
             ctx.commit_deadline
-            + pulse_times_trapz(
-                ctx.commit_vel,
-                0,
-                cfg.max_speed,
-                cfg.max_accel,
-                -cfg.max_decel,
-                steps,
-            )
-            * 1_000_000_000
+            + pulse_times_linaccel(steps, ctx.commit_vel, a_out) * 1_000_000_000
         ).astype(np.int64)
 
         velocities = np.empty_like(deadlines, dtype=np.float64)
         velocities[0] = ctx.commit_vel
         velocities[1:] = (
-            (1 if dir == _Direction.FWD else -1)
+            (1 if dir == StepDir.FWD else -1)
             * 1_000_000_000
             / (deadlines[1:] - deadlines[:-1])
         )
@@ -467,3 +566,11 @@ def _plan_abort(activity: Activity) -> StateFn:
             return _plan_dispatch
 
     return plan_abort
+
+
+def _nop_deadlines(
+    from_ns: int,
+    to_ns: int,
+    max_interval_ns: int,
+):
+    return np.arange(from_ns + max_interval_ns, to_ns, max_interval_ns)

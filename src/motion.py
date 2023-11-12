@@ -102,8 +102,13 @@ def pulse_times_linaccel(
     u: float,  # initial velocity
     a: float,  # accelration
 ):
+    if steps == 0:
+        return np.array([])
+
     s = np.linspace(math.copysign(1, steps), steps, abs(steps))
-    common = np.sqrt(2 * a * s + u**2)
+    # TODO: I'm not wild about this np.clip, but I'm getting nan for the final
+    # value (but only sometimes, especially in Stepper _plan_abort).
+    common = np.sqrt(np.clip(2 * a * s + u**2, 0, None))
 
     # print(f"{num:10}{round(u, 2):10}{a:10}{round(common[0], 2):10}")
     # TODO: Prove that this is the right way to choose which root is correct.
