@@ -114,6 +114,18 @@ async def goto_by_name():
         return await returnResponse({"goto": False, "name": _name}, 400)
 
 
+@api.route("/goto/mpc/", methods=["POST"])
+async def goto_by_mpc_query():
+    try:
+        name = request.args.get("name")
+        assert name is not None
+        get_telescope().track(tc.MPCQueryTarget(name))
+
+        return await returnResponse({"goto": True, "name": name}, 200)
+    except:
+        return await returnResponse({"goto": False}, 400)
+
+
 @api.route("/goto/solar_system_object/", methods=["POST"])
 async def goto_solar_system_object():
     try:

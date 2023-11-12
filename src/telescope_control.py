@@ -113,6 +113,27 @@ class SolarSystemTarget(Target):
             return get_body(self.name, time, location)
 
 
+@dataclass
+class MPCQueryTarget(Target):
+    name: str
+
+    def coordinate(self, time: Time, location: EarthLocation):
+        from astroquery.mpc import MPC
+
+        eph = MPC.get_ephemeris(  # pyright: ignore
+            self.name,
+            start=time,
+            location=location,
+            number=1,
+        )
+
+        return SkyCoord(
+            ra=eph["RA"].to(u.hourangle)[0],
+            dec=eph["Dec"].to(u.deg)[0],
+            frame=ICRS,
+        )
+
+
 class TelescopeControl:
     _config: Config
     _conn: mpc.Connection | None
