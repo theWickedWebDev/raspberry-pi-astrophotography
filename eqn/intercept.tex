@@ -1,0 +1,183 @@
+
+\documentclass{article}
+\usepackage{sagetex}
+\usepackage{array}
+\usepackage{breqn}
+\usepackage{cancel}
+\usepackage{comment}
+\usepackage[top=1in,bottom=1in]{geometry}
+\usepackage{multicol}
+\usepackage{sageutil}
+\setlength{\columnsep}{20pt}
+\setlength{\parskip}{\baselineskip}%
+\setlength{\parindent}{0pt}%
+\begin{document}
+
+\begin{sagesilent}
+  from sage.misc.latex import latex_variable_name
+  def colorvar(s, color=None):
+    prefix = ""
+    if color is not None:
+      prefix = f"\\color[HTML]{{{color.html_color()[1:]}}}"
+
+    return [
+      var(v, latex_name=f"{prefix}{{{latex_variable_name(v)}}}")
+      for v in s.replace(",", " ").split(" ")
+      if v != ""
+    ]
+
+  colorvar("a_in, a_out, c, p_i, v_i, v_f, q_i, u", Color("gray"))
+  colorvar("s_in, s_out, s_c, p_f", Color("aqua"))
+  colorvar("v_c t", Color("orange"))
+  colorvar("s", Color("lime"))
+  colorvar("t_in, t_c, t_out", Color("magenta"))
+\end{sagesilent}
+
+\begin{sagesilent}
+  final_pos = p_f == p_i + s
+  displacement = s == s_in + s_c + s_out
+  tgt_final_pos = p_f == q_i + u * t
+  in_disp = s_in == t_in * (v_i + v_c) / 2
+  out_disp = s_out == t_out * (v_c + v_f) / 2
+  cruise_disp = s_c == v_c * t_c
+
+  cruise_vel_sq = v_c**2 == v_i**2 + 2 * a_in * s_in
+  final_vel_sq = v_f**2 == v_c**2 + 2 * a_out * s_out
+
+  total_time = t == t_in + t_c + t_out
+\end{sagesilent}
+
+Final Position
+\sagenamed{final_pos}
+Displacement
+\sagenamed{displacement}
+Total Time
+\sagenamed{total_time}
+Target Final Position
+\sagenamed{tgt_final_pos}
+Ramp In Displacement
+\sagenamed{in_disp}
+Ramp Out Displacement
+\sagenamed{out_disp}
+Cruise Displacement
+\sagenamed{cruise_disp}
+
+Cruise Velocity Squared
+\sagenamed{cruise_vel_sq}
+Final Velocity Squared
+\sagenamed{final_vel_sq}
+
+\hrule
+
+\begin{sagesilent}
+head = final_pos
+head = step1 = head.subs(s=displacement.right())
+\end{sagesilent}
+
+Substitute \sageref{displacement} for $\sage{s}$ into \sageref{final_pos}
+\sagenamed{step1}
+
+\begin{sagesilent}
+head = step2 = head.subs(p_f=tgt_final_pos.right())
+\end{sagesilent}
+
+Substitute \sageref{tgt_final_pos} for $\sage{p_f}$
+\sagenamed{step2}
+
+\begin{sagesilent}
+head = step3 = head.subs(
+  s_c=cruise_disp.solve(s_c)[0].right()
+)
+\end{sagesilent}
+
+Substitute \sageref{cruise_disp} for $\sage{s_c}$
+\sagenamed{step3}
+
+\begin{sagesilent}
+head = step4 = head.subs(
+  t_c=total_time.solve(t_c)[0].right()
+)
+\end{sagesilent}
+
+Substitute \sageref{total_time} for $\sage{t_c}$
+\sagenamed{step4}
+
+\begin{sagesilent}
+head = step5 = head.subs(
+  t_in=in_disp.solve(t_in)[0].right(),
+  t_out=out_disp.solve(t_out)[0].right(),
+)
+\end{sagesilent}
+
+Substitute \sageref{in_disp} for $\sage{t_in}$ and \sageref{out_disp} for $\sage{t_out}$
+\sagenamed{step5}
+
+\begin{sagesilent}
+head = step6 = head.subs(
+  s_in=cruise_vel_sq.solve(s_in)[0].right(),
+  s_out=final_vel_sq.solve(s_out)[0].right(),
+)
+\end{sagesilent}
+
+Substitute \sageref{cruise_vel_sq} for $\sage{s_in}$ and \sageref{final_vel_sq} for $\sage{s_out}$
+\sagenamed{step6}
+
+\begin{sagesilent}
+  T(v_c) = head.solve(t)[0].right()
+\end{sagesilent}
+
+Solve for t to produce $T(\sage{v_c})$
+\sagenamed{T}
+
+\begin{sagesilent}
+  # Write the roots of the derivative of T(v_c) with respect to v_c to
+  # outputs.txt in a convenient format for copy-pasting into python.
+  v_c_roots = T(v_c).diff(v_c).solve(v_c)
+  with open("outputs.txt", "w") as f:
+    f.write("T(v_c)\n")
+    f.write(str(T).replace("^", "**"))
+    f.write("\n")
+
+    f.write("\n")
+
+    f.write("vc roots\n")
+    f.write(str(v_c_roots).replace("^", "**"))
+    f.write("\n")
+\end{sagesilent}
+
+\begin{comment}
+
+\hrule
+
+\begin{sagesilent}
+  params=dict(
+    # ramp in/out
+    a_in=5,
+    a_out=-10,
+
+    # initial position/velocity
+    p_i=10,
+    v_i=3,
+
+    # final velocity (often equal to u)
+    v_f=3,
+
+    # initial target position and velocity
+    q_i=100,
+    u=3,
+  )
+
+  best_vc = vc_roots[1](**params)
+
+  intercept_t = T(**params, v_c = best_vc.right())
+\end{sagesilent}
+
+Best $\sage{v_c}$
+$$\sage{best_vc} = \sage{best_vc.right().n(digits=5)}$$
+
+$t_{intercept}$
+$$\sage{intercept_t} = \sage{intercept_t.n(digits=5)}$$
+
+\end{comment}
+
+\end{document}

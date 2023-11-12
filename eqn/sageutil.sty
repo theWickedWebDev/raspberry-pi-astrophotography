@@ -1,0 +1,5 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{sageutil}[2023/11/09 Sage Utilities]
+
+\newcommand{\sagenamed}[1]{\begin{equation}\label{sageeq:#1}\sage{#1}\end{equation}}
+\newcommand{\sageref}[1]{(\ref{sageeq:#1})}

@@ -1,0 +1,15 @@
+/sage-plots-for-*/
+*.sage
+*.sage.py
+
+.auctex-auto/
+*.aux
+*.dvi
+*.log
+*.scmd
+*.sout
+*.pdf
+
+.python-version
+
+outputs.txt

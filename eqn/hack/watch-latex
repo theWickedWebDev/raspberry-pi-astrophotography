@@ -1,0 +1,24 @@
+#!/bin/bash
+
+if [[ "$#" -ne 1 ]]; then
+    echo >&2 "usage: watch-latex <filename>"
+    exit 1
+fi
+
+file="$1"
+
+export TEXINPUTS="${CONDA_PREFIX}/share/texmf/tex/latex/sagetex/:"
+
+process() {
+    base="${0%.tex}"
+    rm -f "${base}.sagetex.*"
+    pdflatex -draftmode "$0"
+    sage "${base}.sagetex.sage"
+    pdflatex "$0"
+}
+export -f process
+
+echo "$file" | entr -cr bash -c '
+    set -e
+    process
+' "$file"

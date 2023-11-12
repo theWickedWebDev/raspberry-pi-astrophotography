@@ -1,0 +1,12 @@
+#!/bin/bash
+
+script_dir=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
+
+for ext in aux dvi log scmd sout pdf sagetex.sage sagetex.sage.py; do
+    rm -f "$script_dir/../"*.$ext
+done
+
+rm -rf "$script_dir/../.auctex-auto"
+rm -f "$script_dir/../outputs.txt"
+rm -rf "$script_dir/../sage-plots-for-"*
+
