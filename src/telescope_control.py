@@ -208,6 +208,7 @@ class TelescopeControl:
         )
         proc.start()
 
+        child_had_error = False
         stop_deadline = None
         while proc.exitcode is None and (
             stop_deadline is None or time.time() < stop_deadline
@@ -235,12 +236,18 @@ class TelescopeControl:
                             self._target = target
 
                         trio.from_thread.run_sync(update)
+                    case _ChildError():
+                        child_had_error = True
+                        stop.set()
                     case _:
                         assert_never(msg)
 
         if proc.exitcode is None:
             self._log.error("timed out waiting for telescope control to stop")
             proc.kill()
+
+        if child_had_error:
+            raise Exception("telescope error (see above)") from None
 
 
 @dataclass
@@ -258,8 +265,13 @@ class _Log:
     record: logging.LogRecord
 
 
+@dataclass
+class _ChildError:
+    pass
+
+
 _InputMessage: TypeAlias = _Calibrate | _CalibrateRelSteps | _Goal
-_OutputMessage: TypeAlias = _PublishTarget | _PublishOrientation | _Log
+_OutputMessage: TypeAlias = _PublishTarget | _PublishOrientation | _Log | _ChildError
 
 
 class StateFn(Protocol):
@@ -343,6 +355,9 @@ def _mp_main(config: Config, conn: mpc.Connection):
     log.debug("running")
     try:
         _run(ctx, conn)
+    except Exception as e:
+        conn.send(_ChildError())
+        raise e
     finally:
         ctx.stop.set()
 

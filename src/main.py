@@ -93,12 +93,16 @@ async def main():
     app = appserver.create_app(telescope)
 
     try:
-        async with trio.open_nursery() as n:
-            signal.signal(signal.SIGTERM, lambda sig, frame: n.cancel_scope.cancel())
+        with trio.open_signal_receiver(signal.SIGTERM) as sigs:
+            async with trio.open_nursery() as n:
+                n.start_soon(telescope.run)
+                n.start_soon(stellarium.serve, "0.0.0.0", 10001, telescope)
+                n.start_soon(app.run_task, "0.0.0.0", 8765)
 
-            n.start_soon(telescope.run)
-            n.start_soon(stellarium.serve, "0.0.0.0", 10001, telescope)
-            n.start_soon(app.run_task, "0.0.0.0", 8765)
+                async for sig in sigs:
+                    if sig == signal.SIGTERM:
+                        n.cancel_scope.cancel()
+
     except KeyboardInterrupt:
         pass
 
