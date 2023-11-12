@@ -9,7 +9,6 @@ import multiprocessing.connection as mpc
 import multiprocessing.synchronize as mps
 from threading import Condition, Event, Thread
 import time
-import traceback
 from typing import Protocol, TypeAlias
 from typing_extensions import assert_never
 
@@ -28,8 +27,6 @@ import trio
 
 from .activity import Activity as _Activity, ActivityStatus
 from .stepper import Stepper, StepperConfig, compute_intercept
-
-_log = logging.getLogger(__name__)
 
 TelescopeOrientation: TypeAlias = tuple[u.Quantity["angle"], u.Quantity["angle"]]
 
@@ -121,6 +118,7 @@ class TelescopeControl:
     _conn: mpc.Connection | None
     _orientation: TelescopeOrientation
     _target: Target | None
+    _log: logging.Logger
 
     def __init__(self, config: Config):
         self._config = config
@@ -130,6 +128,7 @@ class TelescopeControl:
             0 * u.deg,  # pyright: ignore
         )
         self._target = None
+        self._log = logging.getLogger(__name__)
 
     @property
     def config(self):
@@ -204,37 +203,44 @@ class TelescopeControl:
         child_conn: mpc.Connection,
         stop: mps.Event,
     ):
-        try:
-            proc = mp.Process(target=_mp_main, args=[self.config, child_conn])
-            proc.start()
+        proc = mp.Process(
+            target=_with_error_printing(_mp_main), args=[self.config, child_conn]
+        )
+        proc.start()
 
-            while not stop.is_set():
-                if conn.poll(1):
-                    msg: _OutputMessage = conn.recv()
-                    match msg:
-                        case _PublishOrientation(orientation):
+        stop_deadline = None
+        while proc.exitcode is None and (
+            stop_deadline is None or time.time() < stop_deadline
+        ):
+            if stop.is_set():
+                stop_deadline = time.time() + 5
+                self._log.info("stopping")
+                conn.send(_Stop())
+                stop.clear()
 
-                            def update():
-                                self._orientation = orientation
+            if conn.poll(1):
+                msg: _OutputMessage = conn.recv()
+                match msg:
+                    case _Log(record):
+                        self._log.callHandlers(record)
+                    case _PublishOrientation(orientation):
 
-                            trio.from_thread.run_sync(update)
-                        case _PublishTarget(target):
+                        def update():
+                            self._orientation = orientation
 
-                            def update():
-                                self._target = target
+                        trio.from_thread.run_sync(update)
+                    case _PublishTarget(target):
 
-                            trio.from_thread.run_sync(update)
-                        case _:
-                            print(f"unhandled message: {msg}")
+                        def update():
+                            self._target = target
 
-            _log.info("stopping")
-            conn.send(_Stop())
-            proc.join(5)
-            if proc.exitcode is None:
-                _log.error("timed out waiting for telescope control to stop")
-                proc.kill()
-        except:
-            traceback.print_exc()
+                        trio.from_thread.run_sync(update)
+                    case _:
+                        assert_never(msg)
+
+        if proc.exitcode is None:
+            self._log.error("timed out waiting for telescope control to stop")
+            proc.kill()
 
 
 @dataclass
@@ -247,8 +253,13 @@ class _PublishOrientation:
     orientation: TelescopeOrientation
 
 
+@dataclass
+class _Log:
+    record: logging.LogRecord
+
+
 _InputMessage: TypeAlias = _Calibrate | _CalibrateRelSteps | _Goal
-_OutputMessage: TypeAlias = _PublishTarget | _PublishOrientation
+_OutputMessage: TypeAlias = _PublishTarget | _PublishOrientation | _Log
 
 
 class StateFn(Protocol):
@@ -265,6 +276,9 @@ class _RunContext:
     config: Config
     bearing_motor: Stepper
     dec_motor: Stepper
+    # Logger objects are not multiprocess safe, so we create a new Logger in the
+    # child process.
+    log: logging.Logger
     bearing_offset: int = 0
     dec_offset: int = 0
     target: Target | None = None
@@ -282,14 +296,35 @@ class _RunContext:
         return self.dec_motor.position + self.dec_offset
 
 
+def _with_error_printing(fn):
+    def wrapper(*args, **kwargs):
+        try:
+            fn(*args, **kwargs)
+        except Exception:
+            import traceback
+
+            traceback.print_exc()
+
+    return wrapper
+
+
 def _mp_main(config: Config, conn: mpc.Connection):
+    log = logging.Logger(__name__ + ".mp", logging.getLogger(__name__).level)
+
+    class LogHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            conn.send(_Log(record))
+
+    log.addHandler(LogHandler())
+
+    log.debug("starting")
+
     ctx = _RunContext(
         config=config,
         bearing_motor=Stepper(config.bearing_axis.config),
         dec_motor=Stepper(config.declination_axis.config),
+        log=log,
     )
-
-    _log.debug("telescope: starting")
 
     ctx.bearing_motor.start()
     ctx.dec_motor.start()
@@ -297,26 +332,38 @@ def _mp_main(config: Config, conn: mpc.Connection):
     threads = [
         Thread(target=target, args=args)
         for target, args in [
-            (_publish_state, [ctx, conn]),
-            (_read_goals, [ctx, conn]),
+            (_with_error_printing(_publish_state), [ctx, conn]),
+            (_with_error_printing(_read_goals), [ctx, conn]),
         ]
     ]
 
     for t in threads:
         t.start()
 
-    _log.debug("telescope: running")
+    log.debug("running")
     try:
         _run(ctx, conn)
-    except:
-        traceback.print_exc()
     finally:
         ctx.stop.set()
 
         for t in threads:
             t.join()
 
-    _log.debug("telescope: stopped")
+        log.debug("threads complete")
+
+        ctx.bearing_motor.stop()
+        log.debug("bearing motor stopped")
+
+        ctx.dec_motor.stop()
+        log.debug("dec motor stopped")
+
+    log.debug(f"stopped")
+
+    import os, signal
+
+    # FIXME: Sometimes (intermittently) the multiprocess child fails to exit,
+    # even though this function has returned.  So, instead, just kill ourselves.
+    os.kill(os.getpid(), signal.SIGKILL)
 
 
 # TODO: Rename this?
@@ -373,12 +420,13 @@ def _read_goals(ctx: _RunContext, conn: mpc.Connection):
         msg: _InputMessage = conn.recv()
         match msg:
             case (_Track() | _Stop() | _Idle()) as goal:
+                ctx.log.debug(f"received goal {goal}")
                 with ctx.cond:
                     if ctx.activity is not None:
-                        _log.debug(f"canceling activity: {ctx.activity}")
+                        ctx.log.debug(f"canceling activity: {ctx.activity}")
                         ctx.activity.cancel()
                     ctx.activity = _TelescopeActivity(goal, ctx.activity_cond)
-                    _log.debug(f"set activity: {ctx.activity}")
+                    ctx.log.debug(f"set activity: {ctx.activity}")
                     ctx.cond.notify()
 
                 if isinstance(goal, _Stop):
@@ -393,12 +441,12 @@ def _read_goals(ctx: _RunContext, conn: mpc.Connection):
                         _angle_to_steps(ctx.config.declination_axis, dec)
                         - ctx.dec_motor.position
                     )
-                # TODO: Need to cancel any running action?  Could get weird.
-                _log.info(f"calibrated: {ctx.bearing_offset}, {ctx.dec_offset}")
+                ctx.log.debug(f"calibrated: {ctx.bearing_offset}, {ctx.dec_offset}")
             case _CalibrateRelSteps(bearing, dec):
                 with ctx.cond:
                     ctx.bearing_offset += bearing
                     ctx.dec_offset += dec
+                ctx.log.debug(f"calibrated: {ctx.bearing_offset}, {ctx.dec_offset}")
             case _:
                 assert_never(msg)
 
@@ -509,7 +557,7 @@ def _run_track(activity: _TelescopeActivity) -> StateFn:
                     ctx.dec_motor.run_constant(tgt_dec_vel, deadline_ns)
                 )
             else:
-                _log.debug("lucky you! synchronicity.")
+                ctx.log.debug("lucky you! synchronicity.")
             planned_to_ns += round(max(dec_params.t, bearing_params.t) * 1_000_000_000)
             activity_groups.append(intercept_group)
 
@@ -531,7 +579,7 @@ def _run_track(activity: _TelescopeActivity) -> StateFn:
                 run_dt_ns = int(
                     1_000_000_000 / min(abs(tgt_bearing_vel), abs(tgt_dec_vel))
                 )
-                _log.info(
+                ctx.log.info(
                     f"planning tracking segment: {run_dt_ns / 1_000_000_000:.2f} s"
                 )
 
@@ -545,9 +593,9 @@ def _run_track(activity: _TelescopeActivity) -> StateFn:
 
                 if not _ag_wait_one_group(activity, activity_groups):
                     if activity_groups[0] == intercept_group:
-                        _log.info("canceled while intercepting")
+                        ctx.log.info("canceled while intercepting")
                     else:
-                        _log.info("canceled while tracking")
+                        ctx.log.info("canceled while tracking")
                     break
 
             _finalize_activity(activity)
@@ -622,7 +670,7 @@ def _run_idle(activity: _TelescopeActivity) -> StateFn:
     assert isinstance(activity._goal, _Idle)
 
     def run_idle(ctx: _RunContext, conn: mpc.Connection):
-        _log.info("going idle")
+        ctx.log.info("going idle")
         return _run_dispatch
 
     return run_idle
@@ -632,7 +680,7 @@ def _run_stop(activity: _TelescopeActivity) -> StateFn:
     assert isinstance(activity._goal, _Stop)
 
     def run_stop(ctx: _RunContext, conn: mpc.Connection):
-        _log.info("stopping")
+        ctx.log.info("stopping")
         ctx.stop.set()
         return None
 
