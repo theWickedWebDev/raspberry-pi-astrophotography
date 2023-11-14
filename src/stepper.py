@@ -18,7 +18,8 @@ from .motion import (
     pulse_times_linaccel,
     pulse_times_trapz,
     travel_linaccel,
-    trapz_intercept_info,
+    trapz_opt_v_c_and_t_to_intercept,
+    trapz_v_c_to_intercept_at_t,
 )
 
 _log = logging.getLogger(__name__)
@@ -317,13 +318,14 @@ def compute_intercept(
     target: float,
     target_velocity: float,
     final_velocity: float,
+    t: float | None = None,
 ) -> InterceptParams:
     scratch_delta = target - position
 
     if scratch_delta == 0:
         return InterceptParams(
             delta=0,
-            t=0,
+            t=0 if t is None else t,
             v_c=0,
             a_in=0,
             a_out=0,
@@ -334,23 +336,35 @@ def compute_intercept(
     a_in = math.copysign(config.max_accel, scratch_delta)
     a_out = -math.copysign(config.max_decel, scratch_delta)
 
-    info = trapz_intercept_info(
-        config.max_speed,
-        a_in,
-        a_out,
-        position,
-        velocity,
-        final_velocity,
-        target,
-        target_velocity,
-    )
+    if t is None:
+        v_c, t = trapz_opt_v_c_and_t_to_intercept(
+            config.max_speed,
+            a_in,
+            a_out,
+            position,
+            velocity,
+            final_velocity,
+            target,
+            target_velocity,
+        )
+    else:
+        v_c = trapz_v_c_to_intercept_at_t(
+            a_in=a_in,
+            a_out=a_out,
+            p_i=position,
+            v_i=velocity,
+            v_f=final_velocity,
+            q_i=target,
+            u=target_velocity,
+            t=t,
+        )
 
-    p_f = round(info["p_f"])
-    delta = round(info["p_f"]) - position
+    p_f = target + t * target_velocity
+    delta = p_f - position
     return InterceptParams(
         delta=delta,
-        t=info["t"],
-        v_c=info["v_c"],
+        t=t,
+        v_c=v_c,
         a_in=a_in,
         a_out=a_out,
         p_f=p_f,

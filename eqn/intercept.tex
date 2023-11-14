@@ -130,6 +130,15 @@ Solve for t to produce $T(\sage{v_c})$
 \sagenamed{T}
 
 \begin{sagesilent}
+
+solved_for_v_c = head.solve(v_c)
+
+\end{sagesilent}
+
+\sagenamed{solved_for_v_c[0]}
+\sagenamed{solved_for_v_c[1]}
+
+\begin{sagesilent}
   # Write the roots of the derivative of T(v_c) with respect to v_c to
   # outputs.txt in a convenient format for copy-pasting into python.
   v_c_roots = T(v_c).diff(v_c).solve(v_c)
@@ -143,6 +152,10 @@ Solve for t to produce $T(\sage{v_c})$
     f.write("vc roots\n")
     f.write(str(v_c_roots).replace("^", "**"))
     f.write("\n")
+
+    f.write("\n")
+    f.write("vc in terms of t\n")
+    f.write(str(solved_for_v_c).replace("^", "**"))
 \end{sagesilent}
 
 \begin{comment}

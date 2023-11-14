@@ -6,7 +6,7 @@ def travel_linaccel(vi: float, vf: float, a: float):
     return (vf**2 - vi**2) / (2 * a)
 
 
-def _trapz_intercept_cruise_velocity_roots(
+def _trapz_intercept_v_c_maxima_roots(
     c: float,  # max speed (abs)
     a_in: float,  # in acceleration
     a_out: float,  # out acceleration
@@ -69,7 +69,44 @@ def _trapz_intercept_time(
     )
 
 
-def trapz_intercept_info(
+def trapz_v_c_to_intercept_at_t(
+    a_in: float,  # in acceleration
+    a_out: float,  # out acceleration
+    p_i: float,  # initial position
+    v_i: float,  # initial velocity
+    v_f: float,  # final velocity
+    q_i: float,  # target initial position
+    u: float,  # target velocity
+    t: float,  # time
+):
+    root = math.sqrt(
+        a_in**2 * a_out**2 * t**2
+        - 2 * a_in**2 * a_out * t * v_f
+        + a_in * a_out * v_f**2
+        + a_in * a_out * v_i**2
+        + 2 * (a_in**2 * a_out - a_in * a_out**2) * t * u
+        - 2 * (a_in**2 * a_out - a_in * a_out**2) * p_i
+        + 2 * (a_in**2 * a_out - a_in * a_out**2) * q_i
+        + 2 * (a_in * a_out**2 * t - a_in * a_out * v_f) * v_i
+    )
+
+    a = a_in * a_out * t - a_in * v_f + a_out * v_i
+    b = a_in - a_out
+
+    p_f = q_i + u * t
+    s = p_f - p_i
+
+    # Assume the first solution.
+    v_c = -(a + root) / b
+    # Calculate s_c (cruise distance) using the first solution.
+    s_c = s - travel_linaccel(v_i, v_c, a_in) + travel_linaccel(v_c, v_f, a_out)
+    # If the s and s_c have opposite signs, the second solution is correct.
+    if math.copysign(s_c, s) != s_c:
+        v_c = -(a - root) / b
+    return v_c
+
+
+def trapz_opt_v_c_and_t_to_intercept(
     c: float,  # max speed (abs)
     a_in: float,  # in acceleration
     a_out: float,  # out acceleration
@@ -79,7 +116,7 @@ def trapz_intercept_info(
     q_i: float,  # target initial position
     u: float,  # target velocity
 ):
-    v_c_1, v_c_2 = _trapz_intercept_cruise_velocity_roots(
+    v_c_1, v_c_2 = _trapz_intercept_v_c_maxima_roots(
         c, a_in, a_out, p_i, v_i, v_f, q_i, u
     )
     t = _trapz_intercept_time(a_in, a_out, p_i, v_i, v_f, q_i, u, v_c_2)
@@ -90,11 +127,7 @@ def trapz_intercept_info(
             f"maybe it's the other root sometimes, after all: {t} - {t_alt}"
         )
 
-    return dict(
-        v_c=v_c,
-        t=t,
-        p_f=q_i + t * u,
-    )
+    return v_c, t
 
 
 def pulse_times_linaccel(

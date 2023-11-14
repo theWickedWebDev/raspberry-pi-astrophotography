@@ -26,6 +26,7 @@ import numpy as np
 import trio
 
 from .activity import Activity as _Activity, ActivityStatus
+from .motion import trapz_v_c_to_intercept_at_t
 from .stepper import Stepper, StepperConfig, compute_intercept
 
 TelescopeOrientation: TypeAlias = tuple[u.Quantity["angle"], u.Quantity["angle"]]
@@ -549,7 +550,7 @@ def _run_track(activity: _TelescopeActivity) -> StateFn:
 
             # Predict target location a short time in the future (to leave time
             # for the initial calculations)
-            planned_to_ns = time.time_ns() + 100_000_000
+            planned_to_ns = time.time_ns() + 500_000_000
             planned_to_time = Time(
                 datetime.fromtimestamp(planned_to_ns / 1_000_000_000, timezone.utc)
             )
@@ -562,44 +563,40 @@ def _run_track(activity: _TelescopeActivity) -> StateFn:
                 ctx, goal.target, planned_to_time, predict_dt
             )
 
-            bearing_params = compute_intercept(
-                ctx.bearing_motor.config,
-                ctx.bearing_steps,
-                ctx.bearing_motor.velocity,
-                tgt_bearing_steps,
-                tgt_bearing_vel,  # target_velocity
-                tgt_bearing_vel,  # target_velocity
-            )
+            bearing_kwargs = {
+                "config": ctx.bearing_motor.config,
+                "position": ctx.bearing_steps,
+                "velocity": ctx.bearing_motor.velocity,
+                "target": tgt_bearing_steps,
+                "target_velocity": tgt_bearing_vel,
+                "final_velocity": tgt_bearing_vel,
+            }
+            bearing_params = compute_intercept(**bearing_kwargs)
 
-            dec_params = compute_intercept(
-                ctx.dec_motor.config,
-                ctx.dec_steps,
-                ctx.dec_motor.velocity,
-                tgt_dec_steps,  # target
-                tgt_dec_vel,  # target_velocity
-                tgt_dec_vel,  # target_velocity
-            )
+            dec_kwargs = {
+                "config": ctx.dec_motor.config,
+                "position": ctx.dec_steps,
+                "velocity": ctx.dec_motor.velocity,
+                "target": tgt_dec_steps,
+                "target_velocity": tgt_dec_vel,
+                "final_velocity": tgt_dec_vel,
+            }
+            dec_params = compute_intercept(**dec_kwargs)
 
             activity_groups: list[_ActivityGroup] = []
+
+            if bearing_params.t < dec_params.t:
+                bearing_params = compute_intercept(**bearing_kwargs, t=dec_params.t)
+            elif bearing_params.t > dec_params.t:
+                dec_params = compute_intercept(**dec_kwargs, t=bearing_params.t)
+            else:
+                ctx.log.debug("lucky you! synchronicity.")
 
             intercept_group = [
                 ctx.bearing_motor.intercept_precomputed(bearing_params, planned_to_ns),
                 ctx.dec_motor.intercept_precomputed(dec_params, planned_to_ns),
             ]
-            if bearing_params.t < dec_params.t:
-                dt = dec_params.t - bearing_params.t
-                deadline_ns = planned_to_ns + round(dt * 1_000_000_000)
-                intercept_group.append(
-                    ctx.bearing_motor.run_constant(tgt_bearing_vel, deadline_ns)
-                )
-            elif bearing_params.t > dec_params.t:
-                dt = bearing_params.t - dec_params.t
-                deadline_ns = planned_to_ns + round(dt * 1_000_000_000)
-                intercept_group.append(
-                    ctx.dec_motor.run_constant(tgt_dec_vel, deadline_ns)
-                )
-            else:
-                ctx.log.debug("lucky you! synchronicity.")
+
             planned_to_ns += round(max(dec_params.t, bearing_params.t) * 1_000_000_000)
             activity_groups.append(intercept_group)
 
