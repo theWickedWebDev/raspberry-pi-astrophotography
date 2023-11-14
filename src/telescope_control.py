@@ -195,7 +195,12 @@ class TelescopeControl:
 
     async def run(self):
         conn, child_conn = mp.Pipe()
-        self._conn = conn
+        # The type definitions for mp.Pipe are different  on Unix and Windows.
+        # They are nominally incompatible so there is a type error, but
+        # structurally compatible, so all uses succeed.  Just ignore the error.
+        # TODO: Define a protocol that defines the part of the [Pipe]Connection
+        # interface that we rely on?
+        self._conn = conn  # pyright: ignore
         stop = mp.Event()
 
         async with trio.open_nursery() as n:
@@ -610,17 +615,11 @@ def _run_track(activity: _TelescopeActivity) -> StateFn:
                     ctx, goal.target, planned_to_time, predict_dt
                 )
 
-                # HACK: Until we have a quantization error accumulator for very
-                # small velocities, execute very long run_constant commands.
-
-                run_dt_ns = int(
-                    1_000_000_000 / min(abs(tgt_bearing_vel), abs(tgt_dec_vel))
-                )
-                ctx.log.info(
-                    f"planning tracking segment: {run_dt_ns / 1_000_000_000:.2f} s"
+                ctx.log.debug(
+                    f"planning tracking segment: {predict_dt_ns / 1_000_000_000:.2f} s"
                 )
 
-                planned_to_ns += run_dt_ns
+                planned_to_ns += predict_dt_ns
                 activity_groups.append(
                     [
                         ctx.bearing_motor.run_constant(tgt_bearing_vel, planned_to_ns),

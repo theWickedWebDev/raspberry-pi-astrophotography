@@ -31,7 +31,7 @@ _log = logging.getLogger(__name__)
 
 
 class _PulseFn(Protocol):
-    def __call__(self, /, stepper: Stepper, direction: StepDir) -> None:
+    def __call__(self, stepper: Stepper, direction: StepDir, /) -> None:
         ...
 
 
@@ -107,7 +107,7 @@ class _RunState:
 
 @dataclass
 class _PlanContext:
-    commit_pos: int
+    commit_pos: float
     commit_vel: float
     commit_deadline: int
 
@@ -301,28 +301,23 @@ class Stepper:
 class InterceptParams:
     # TODO: Capture inputs also?
 
-    delta: int
+    delta: float
     t: float
     v_c: float
     a_in: float
     a_out: float
-    p_f: int
+    p_f: float
     v_f: float
 
 
 def compute_intercept(
     config: StepperConfig,
-    position: int,
+    position: float,
     velocity: float,
-    target: int,
+    target: float,
     target_velocity: float,
     final_velocity: float,
 ) -> InterceptParams:
-    # TODO: Does this need to be configurable?  Callers can easily do this
-    # calculation if they need to.
-    # t0 = 0
-    # target_t0 = target + t0 * target_velocity
-
     scratch_delta = target - position
 
     if scratch_delta == 0:
@@ -413,7 +408,7 @@ def _plan_intercept(activity: _StepperActivity) -> _StateFn:
                     stepper._config,
                     ctx.commit_pos,
                     ctx.commit_vel,
-                    round(target_t0),
+                    target_t0,
                     goal.target_velocity,
                     goal.final_velocity,
                 )
@@ -431,7 +426,8 @@ def _plan_intercept(activity: _StepperActivity) -> _StateFn:
                 params.v_c,
                 params.a_in,
                 params.a_out,
-                params.delta,
+                # TODO: Handle fractional positions, like in run_constant.
+                round(params.delta),
             )
             * 1_000_000_000
         ).astype(np.int64)
@@ -486,8 +482,15 @@ def _plan_run_constant(activity: _StepperActivity) -> _StateFn:
             return _plan_dispatch
 
         # TODO: Deal with quantization errors (should be pretty small)
-        interval = abs(1_000_000_000 / goal.velocity)
+        ideal_interval = int(abs(1_000_000_000 / goal.velocity))
         dir = StepDir.FWD if goal.velocity > 0 else StepDir.REV
+
+        interval = ideal_interval
+        next_int_pos = _next_int(ctx.commit_pos, dir)
+        next_int_t = (next_int_pos - ctx.commit_pos) / goal.velocity
+        next_int_interval = round(1_000_000_000 * next_int_t)
+        if next_int_interval != 0:
+            interval = next_int_interval
 
         done = False
         while not done:
@@ -496,8 +499,11 @@ def _plan_run_constant(activity: _StepperActivity) -> _StateFn:
                     return _plan_abort(activity)
 
             deadline = round(ctx.commit_deadline + interval)
-            if deadline > goal.deadline_ns:
+            interval = ideal_interval
+            if deadline >= goal.deadline_ns:
                 done = True
+                if deadline > goal.deadline_ns:
+                    dir = StepDir.NOP
                 deadline = goal.deadline_ns
 
             for d in _nop_deadlines(
@@ -508,17 +514,38 @@ def _plan_run_constant(activity: _StepperActivity) -> _StateFn:
                 with activity._cond:
                     if activity._canceled:
                         return _plan_abort(activity)
+                _commit_const_vel(ctx, d, goal.velocity)
                 motion.put((d, StepDir.NOP))
 
-            ctx.commit_deadline = deadline
-            ctx.commit_pos += dir
-            ctx.commit_vel = goal.velocity
+            _commit_const_vel(ctx, deadline, goal.velocity)
             motion.put((deadline, dir))
 
         motion.put(activity)
         return _plan_dispatch
 
     return plan_run_constant
+
+
+def _commit_const_vel(ctx: _PlanContext, deadline: int, v: float):
+    dp = v * (deadline - ctx.commit_deadline) / 1_000_000_000
+    ctx.commit_deadline = deadline
+    ctx.commit_pos += dp
+    ctx.commit_vel = v
+
+
+def _next_int(x: float, dir: StepDir):
+    assert dir != StepDir.NOP
+
+    tp = np.floor(x)
+
+    if x == tp:
+        return int(x)
+
+    adj = tp - x
+    if dir == StepDir.FWD:
+        return int(x + adj + 1)
+
+    return int(x + adj)
 
 
 def _plan_abort(activity: _StepperActivity) -> _StateFn:
