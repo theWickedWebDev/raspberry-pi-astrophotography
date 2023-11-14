@@ -42,7 +42,7 @@ class StepperConfig:
     max_accel: float  # steps/s/s
     max_decel: float  # steps/s/s
     pulse: _PulseFn
-    max_interval_ns: int = 50_000_000
+    max_interval_ns: int = 250_000_000
 
 
 class StepDir(IntEnum):

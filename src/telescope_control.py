@@ -85,6 +85,8 @@ class Config:
     declination_axis: StepperAxis
 
     location: EarthLocation
+    predict_ns: int = 30_000_000_000
+    publish_interval: float = 0.25
 
 
 class Busy(Exception):
@@ -537,8 +539,7 @@ def _run_track(activity: _TelescopeActivity) -> StateFn:
             ctx.cond.notify_all()
 
         try:
-            # TODO: Make predict_dt_ns configurable.
-            predict_dt_ns = 30_000_000_000
+            predict_dt_ns = ctx.config.predict_ns
             predict_dt = predict_dt_ns * u.nanosecond  # pyright: ignore
 
             # Predict target location a short time in the future (to leave time
@@ -730,8 +731,7 @@ def _publish_state(ctx: _RunContext, conn: mpc.Connection):
 
     cfg = ctx.config
 
-    # TODO: Configurable interval
-    while not ctx.stop.wait(0.1):
+    while not ctx.stop.wait(cfg.publish_interval):
         with ctx.cond:
             target = ctx.target
             bearing_steps = ctx.bearing_steps
