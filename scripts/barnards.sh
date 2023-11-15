@@ -1,11 +1,12 @@
 DIR=$(date +"%m-%d-%Y")
-NAME="cassiopeia"
+NAME="barnards-loop"
 
-FRAMES=150 # Number of frames to take
+FRAMES=1 # Number of frames to take
 FOCAL=30
-ISO=1600
-APERTURE=5.6
-EXPOSURE=60 # Exposure, in seconds 
+ISO=800
+APERTURE=5
+
+EXPOSURE=90 # Exposure, in seconds 
 
 # FOCAL_REDUCER="fr6.3-"
 # BARLOW=""
@@ -31,25 +32,27 @@ EXPOSURE=60 # Exposure, in seconds
 # ---------------
 # LIGHTS
 # ---------------
-for COUNT in `seq 1 $FRAMES`
-    do
-        echo ""
-        echo "${COUNT}/${FRAMES}"
-        echo ""
+# for COUNT in `seq 1 $FRAMES`
+#     do
+#         echo ""
+#         echo "${COUNT}/${FRAMES}"
+#         echo ""
 
-            # --hook-script=hist-hook.sh \
-        gphoto2 \
-            --set-config imageformat="7" \
-            --set-config-index picturestyle=6 \
-            --set-config shutterspeed=bulb \
-            --set-config iso=$ISO \
-            --set-config autoexposuremode=3 \
-            --filename "/home/pi/astrophotography/captures/$DIR/$NAME/ISO$ISO-${APERTURE}-bulb-${EXPOSURE}s-${FOCAL}-mm-%m-%d-%y_%H:%M:%S__${COUNT}.%C" \
-            --set-config eosremoterelease=5 \
-            --wait-event=${EXPOSURE}s \
-            --set-config eosremoterelease=11 \
-            --wait-event-and-download=6s
-    done
+
+#             # --hook-script=hist-hook.sh \
+
+#         gphoto2 \
+#             --set-config imageformat=6 \
+#             --set-config-index picturestyle=6 \
+#             --set-config shutterspeed=bulb \
+#             --set-config iso=$ISO \
+#             --set-config autoexposuremode=3 \
+#             --filename "/home/pi/astrophotography/captures/$DIR/$NAME/ISO$ISO-${APERTURE}-bulb-${EXPOSURE}s-${FOCAL}-mm-%m-%d-%y_%H:%M:%S__${COUNT}.%C" \
+#             --set-config eosremoterelease=5 \
+#             --wait-event=${EXPOSURE}s \
+#             --set-config eosremoterelease=11 \
+#             --wait-event-and-download=6s
+#     done
 
 # ---------------
 # DARKS
@@ -94,17 +97,17 @@ for COUNT in `seq 1 $FRAMES`
 # --set-config autoexposuremode=3 \ this is Manual
 
     # --hook-script=hist-hook.sh \
-# gphoto2 \
-#     --set-config imageformat=7 \
-#     --set-config-index picturestyle=1 \
-#     --set-config autoexposuremode=2 \
-#     --set-config aperture=36 \
-#     --set-config iso=$ISO \
-#     --set-config shutterspeed="1/4000" \
-#     --interval 5 \
-#     --frames ${FRAMES} \
-#     --filename "/home/pi/astrophotography/captures/$DIR/$NAME/flats-ISO$ISO-${APERTURE}-bulb-${EXPOSURE}s-${FOCAL}-mm-%m-%d-%y_%H:%M:%S.%C" \
-#     --capture-image-and-download
+gphoto2 \
+    --set-config imageformat=7 \
+    --set-config-index picturestyle=1 \
+    --set-config autoexposuremode=2 \
+    --set-config aperture=36 \
+    --set-config iso=$ISO \
+    --set-config shutterspeed="1/4000" \
+    --interval 5 \
+    --frames ${FRAMES} \
+    --filename "/home/pi/astrophotography/captures/$DIR/$NAME/flats-ISO$ISO-${APERTURE}-bulb-${EXPOSURE}s-${FOCAL}-mm-%m-%d-%y_%H:%M:%S.%C" \
+    --capture-image-and-download
 
 # Choice: 10 18
 # Choice: 11 20
