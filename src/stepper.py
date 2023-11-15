@@ -446,6 +446,10 @@ def _plan_intercept(activity: _StepperActivity) -> _StateFn:
             * 1_000_000_000
         ).astype(np.int64)
 
+        if len(deadlines) == 0:
+            motion.put(activity)
+            return _plan_dispatch
+
         velocities = np.empty_like(deadlines, dtype=np.float64)
         velocities[0] = ctx.commit_vel
         velocities[1:] = int(dir) * 1_000_000_000 / (deadlines[1:] - deadlines[:-1])
