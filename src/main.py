@@ -69,7 +69,7 @@ async def main():
                 gear_ratio=4 * 4 * 4 * 4,
                 config=StepperConfig(
                     min_sleep_ns=50_000,
-                    max_speed=2000,
+                    max_speed=500,
                     max_accel=200,
                     max_decel=200,
                     pulse=bearing_pulse,
@@ -80,7 +80,7 @@ async def main():
                 gear_ratio=4 * 4,
                 config=StepperConfig(
                     min_sleep_ns=50_000,
-                    max_speed=2000,
+                    max_speed=500,
                     max_accel=200,
                     max_decel=200,
                     pulse=dec_pulse,
