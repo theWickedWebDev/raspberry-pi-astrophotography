@@ -3,16 +3,18 @@ import argparse
 import logging
 import logging.config
 import os
+import signal
 
 from astropy.coordinates import EarthLocation, HADec, SkyCoord
 from astropy.time import Time
 import astropy.units as u
 import trio
 
-import appserver
-import lib.stellarium as stellarium
-from lib.nsleep import nsleep
-import telescope_control as tc
+from .lib import stellarium
+from .lib.nsleep import nsleep
+from .stepper import StepDir, Stepper, StepperConfig
+from . import appserver
+from . import telescope_control as tc
 
 _log = logging.getLogger(__name__)
 
@@ -49,109 +51,80 @@ async def main():
 
     args = parser.parse_args()
 
-    if not args.virtual:
-        import lib.pi.gpio as gpio
+    if args.virtual:
+        bearing_pulse = virtual_pulse("bearing")
+        dec_pulse = virtual_pulse("dec")
+    else:
+        from .lib.pi import gpio, motor
 
         gpio.setup()
+
+        bearing_pulse = rpi_pulse(motor.RA_PINS)
+        dec_pulse = rpi_pulse(motor.DEC_PINS)
 
     telescope = tc.TelescopeControl(
         config=tc.Config(
             bearing_axis=tc.StepperAxis(
                 motor_steps=800,
                 gear_ratio=4 * 4 * 4 * 4,
-                max_speed=1.5 * u.deg / u.second,  # pyright: ignore
+                config=StepperConfig(
+                    min_sleep_ns=50_000,
+                    max_speed=500,
+                    max_accel=200,
+                    max_decel=200,
+                    pulse=bearing_pulse,
+                ),
             ),
             declination_axis=tc.StepperAxis(
                 motor_steps=400,
                 gear_ratio=4 * 4,
-                max_speed=4 * u.deg / u.second,  # pyright: ignore
-            ),
-            motor_controller=(
-                noop_motor_controller if args.virtual else rpi_motor_controller
+                config=StepperConfig(
+                    min_sleep_ns=50_000,
+                    max_speed=500,
+                    max_accel=200,
+                    max_decel=200,
+                    pulse=dec_pulse,
+                ),
             ),
             location=STEPHEN_HOUSE,
         ),
-        orientation=(
-            0 * u.hourangle,  # pyright: ignore
-            0 * u.deg,  # pyright: ignore
-        ),
-        # orientation=orientation_from_skycoord(SkyCoord.from_name("Polaris")),
-        # orientation=orientation_from_skycoord(SkyCoord.from_name("Mebsuta")),
-        # target=tc.FixedTarget(
-        #     SkyCoord(
-        #         0 * u.hourangle,  # pyright: ignore
-        #         0 * u.deg,  # pyright: ignore
-        #         frame=HADec(obstime=Time.now(), location=STEPHEN_HOUSE),
-        #     ).transform_to(ICRS)
-        # ),
-        # target=tc.FixedTarget(SkyCoord.from_name("Mebsuta")),
-        # target=tc.FixedTarget(SkyCoord.from_name("Polaris")),
-        # target=tc.FixedTarget(SkyCoord.from_name("Vega")),
-        # target=tc.SolarSystemTarget("jupiter"),
     )
 
     app = appserver.create_app(telescope)
 
     try:
-        async with trio.open_nursery() as n:
-            n.start_soon(telescope.run)
-            n.start_soon(stellarium.serve, "0.0.0.0", 10001, telescope)
-            n.start_soon(app.run_task, "0.0.0.0", 8765)
+        with trio.open_signal_receiver(signal.SIGTERM) as sigs:
+            async with trio.open_nursery() as n:
+                n.start_soon(telescope.run)
+                n.start_soon(stellarium.serve, "0.0.0.0", 10001, telescope)
+                n.start_soon(app.run_task, "0.0.0.0", 8765)
+
+                async for sig in sigs:
+                    if sig == signal.SIGTERM:
+                        n.cancel_scope.cancel()
+
     except KeyboardInterrupt:
         pass
 
 
-def noop_motor_controller(
-    config: tc.Config,
-    axes: list[tc.StepperAxis],
-    actions: list[int],
-):
-    for axis, action in zip(axes, actions):
-        name = "unknown"
-        if axis is config.bearing_axis:
-            name = "bearing"
-        elif axis is config.declination_axis:
-            name = "dec"
+def virtual_pulse(name: str):
+    def pulse(stepper: Stepper, direction: StepDir):
+        _log.debug(f"pulse {name}: {direction}")
 
-        if action != 0:
-            _log.debug(f"pulse {name}: {action}")
+    return pulse
 
 
-def rpi_motor_controller(
-    config: tc.Config,
-    axes: list[tc.StepperAxis],
-    actions: list[int],
-):
-    import lib.pi.motor as motor
+def rpi_pulse(pins, fwd=1, rev=0):
+    from .lib.pi import motor
 
-    def find_pins(axis: tc.StepperAxis):
-        if axis is config.bearing_axis:
-            return motor.RA_PINS, 1, 0
-        elif axis is config.declination_axis:
-            return motor.DEC_PINS, 0, 1
-        else:
-            _log.error(f"unknown axis: {axis}")
-            return None
+    def pulse(stepper: Stepper, direction: StepDir):
+        match direction:
+            case StepDir.FWD:
+                motor.step(pins, fwd)
+            case StepDir.REV:
+                motor.step(pins, rev)
 
-    resolved_actions = [
-        (find_pins(axis), action) for axis, action in zip(axes, actions)
-    ]
-    for [pins, fwd, rev], action in resolved_actions:
-        if pins is None:
-            continue
-
-        if action == 1:
-            motor.leading(pins, fwd)  # forward
-        elif action == -1:
-            motor.leading(pins, rev)  # backward
-
-    nsleep(motor.PULSE_NS)
-
-    for [pins, _, _], _ in resolved_actions:
-        if pins is None:
-            continue
-
-        motor.trailing(pins)
+    return pulse
 
 
 if __name__ == "__main__":

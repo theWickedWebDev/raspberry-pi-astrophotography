@@ -28,7 +28,14 @@
       ],
       "propagate": false
     },
-    "telescope_control": {
+    "src.stepper": {
+      "level": "INFO",
+      "handlers": [
+        "stderr"
+      ],
+      "propagate": false
+    },
+    "src.telescope_control": {
       "level": "INFO",
       "handlers": [
         "stderr"
