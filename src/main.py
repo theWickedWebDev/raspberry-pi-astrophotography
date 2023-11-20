@@ -66,7 +66,6 @@ async def main():
         config=tc.Config(
             bearing_axis=tc.StepperAxis(
                 motor_steps=800,
-                # gear_ratio=4 * 4 * 4 * 4,
                 gear_ratio=4 * 4 * 4 * 4 / 1.00985,
                 config=StepperConfig(
                     min_sleep_ns=50_000,
@@ -81,7 +80,7 @@ async def main():
                 gear_ratio=4 * 4,
                 config=StepperConfig(
                     min_sleep_ns=50_000,
-                    max_speed=200,
+                    max_speed=500,
                     max_accel=10,
                     max_decel=10,
                     pulse=dec_pulse,
