@@ -1,20 +1,21 @@
 DIR=$(date +"%m-%d-%Y")
-NAME="eclipse"
+NAME="sun2"
 
-APERTURE="22"
-SHUTTERSPEED="400"
+APERTURE="5.6"
+SHUTTERSPEED="100"
+ISO=800
 
 gphoto2 \
     --set-config-index imageformat=6 \
     --set-config-index picturestyle=1 \
     --set-config shutterspeed="1/$SHUTTERSPEED" \
     --set-config-value aperture=$APERTURE \
-    --set-config iso=100
+    --set-config iso=$ISO
 
 gphoto2 \
-    --filename "/home/pi/captures/eclipse/f${APERTURE}-1_${SHUTTERSPEED}-mm-%m-%d_%H:%M:%S.%C" \
-    --frames 1 \
-    --interval 10 \
+    --filename "/home/pi/astrophotography/captures/$DIR/$NAME/300mm-%m-%d-%y_%H:%M:%S-f${APERTURE}-${SHUTTERSPEED}.%C" \
+    --frames 1\
+    --interval 2 \
     --capture-image-and-download
 
 
