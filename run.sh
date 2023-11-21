@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 poetry shell
-python3 ./src/main.py
+python3 -m src.main
