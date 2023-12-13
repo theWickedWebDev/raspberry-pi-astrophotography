@@ -59,9 +59,9 @@ async def main():
         bearing_pulse = rpi_pulse(motor.RA_PINS)
         dec_pulse = rpi_pulse(motor.DEC_PINS, fwd=0, rev=1)
 
-    MAX_SPEED=2000
-    MAX_ACCEL=200
-    MAX_DECEL=200
+    MAX_SPEED=1200
+    MAX_ACCEL=600
+    MAX_DECEL=600
 
     telescope = tc.TelescopeControl(
         config=tc.Config(
